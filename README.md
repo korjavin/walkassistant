@@ -5,9 +5,11 @@ Walk Assistant is a web-based tool that helps you explore your neighborhood by s
 ## Features
 
 - **Upload GPX Files**: Easily upload GPX tracks from your walks
-- **Visualize Routes**: See your existing routes on an interactive map
+- **Visualize Routes**: See your existing routes on an interactive map with different colors for each route
 - **Discover New Routes**: Get suggestions for new routes that help you explore unexplored areas
-- **Filter Routes**: Filter suggested routes based on distance
+- **Filter Routes**: Filter suggested routes based on minimum and maximum distance
+- **Street-Following Routes**: Generate routes that follow actual streets and paths
+- **Distance Constraints**: Set maximum distance limits for your walks
 
 ## Screenshots
 
@@ -70,6 +72,7 @@ go build -o walkassistant ./backend
 - **Frontend**: HTML, JavaScript, Leaflet.js
 - **CSS Framework**: Water.css (minimal CSS framework)
 - **Map**: OpenStreetMap via Leaflet.js
+- **Routing**: OSRM (Open Source Routing Machine) API for street-following routes
 - **Containerization**: Docker/Podman
 - **CI/CD**: GitHub Actions
 
@@ -92,4 +95,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [gpxgo](https://github.com/tkrajina/gpxgo) - Go library for GPX file parsing
 - [Leaflet.js](https://leafletjs.com/) - JavaScript library for interactive maps
 - [OpenStreetMap](https://www.openstreetmap.org/) - Map data
+- [OSRM](http://project-osrm.org/) - Open Source Routing Machine for street-following routes
 - [Water.css](https://watercss.kognise.dev/) - Minimal CSS framework

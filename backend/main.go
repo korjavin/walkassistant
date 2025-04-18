@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -349,13 +350,26 @@ func generateSuggestedRoutes(minDistance, maxDistance float64, followStreets boo
 	// This is a placeholder algorithm - in a real implementation, you would use
 	// more sophisticated techniques to find unexplored areas
 
-	// For now, we'll just create a route that goes around the perimeter of the explored area
+	// Add some randomization to the perimeter points to generate different routes each time
+	// We don't need to seed the random generator as it's already initialized
+
+	// Add some random variation to the bounding box (up to 10% of the size)
+	latRange := maxLat - minLat
+	lngRange := maxLng - minLng
+
+	// Random variation between -5% and +5%
+	minLatVar := minLat + (rand.Float64()*0.1-0.05)*latRange
+	minLngVar := minLng + (rand.Float64()*0.1-0.05)*lngRange
+	maxLatVar := maxLat + (rand.Float64()*0.1-0.05)*latRange
+	maxLngVar := maxLng + (rand.Float64()*0.1-0.05)*lngRange
+
+	// Create a perimeter with the randomized points
 	perimeter := []TrackPoint{
-		{Latitude: minLat, Longitude: minLng},
-		{Latitude: minLat, Longitude: maxLng},
-		{Latitude: maxLat, Longitude: maxLng},
-		{Latitude: maxLat, Longitude: minLng},
-		{Latitude: minLat, Longitude: minLng},
+		{Latitude: minLatVar, Longitude: minLngVar},
+		{Latitude: minLatVar, Longitude: maxLngVar},
+		{Latitude: maxLatVar, Longitude: maxLngVar},
+		{Latitude: maxLatVar, Longitude: minLngVar},
+		{Latitude: minLatVar, Longitude: minLngVar},
 	}
 
 	// Calculate approximate distance of the suggested route

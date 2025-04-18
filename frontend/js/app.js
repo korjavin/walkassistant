@@ -12,13 +12,13 @@ document.addEventListener('DOMContentLoaded', function() {
     // Add a legend to the map
     const legend = L.control({position: 'bottomright'});
 
-    legend.onAdd = function(map) {
+    legend.onAdd = function() {
         const div = L.DomUtil.create('div', 'map-legend');
         div.innerHTML = `
             <h4>Legend</h4>
             <div class="legend-item">
-                <div class="legend-color blue"></div>
-                <span>Existing Routes</span>
+                <div class="legend-color" style="background-color: #3388ff;"></div>
+                <span>Existing Routes (Multiple Colors)</span>
             </div>
             <div class="legend-item">
                 <div class="legend-color green"></div>
@@ -100,8 +100,11 @@ document.addEventListener('DOMContentLoaded', function() {
             routes.forEach(route => {
                 if (route.trackPoints && route.trackPoints.length > 0) {
                     const points = route.trackPoints.map(point => [point.lat, point.lng]);
+                    // Generate a consistent color based on the route filename
+                    const routeColor = getRouteColor(route.filename || 'route');
+
                     const polyline = L.polyline(points, {
-                        color: 'blue',
+                        color: routeColor,
                         weight: 3,
                         className: 'existing-route'
                     });
@@ -265,7 +268,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!document.getElementById('route-info-panel')) {
                 const routeInfoPanel = L.control({position: 'topright'});
 
-                routeInfoPanel.onAdd = function(map) {
+                routeInfoPanel.onAdd = function() {
                     const div = L.DomUtil.create('div', 'route-info-panel');
                     div.id = 'route-info-panel';
                     return div;
@@ -360,6 +363,41 @@ document.addEventListener('DOMContentLoaded', function() {
         const distance = 2 * R * Math.asin(Math.sqrt(a));
 
         return distance;
+    }
+
+    // Generate a consistent color based on a string (like filename)
+    function getRouteColor(str) {
+        // Default colors if string is empty
+        if (!str) return '#3388ff';
+
+        // Generate a hash from the string
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+
+        // Create a palette of colors that are visually distinct but still pleasant
+        const colors = [
+            '#3388ff', // Default blue
+            '#ff5733', // Orange-red
+            '#33ff57', // Green
+            '#5733ff', // Purple
+            '#ff33a8', // Pink
+            '#33a8ff', // Light blue
+            '#a8ff33', // Lime
+            '#ff33ff', // Magenta
+            '#33ffff', // Cyan
+            '#ffff33', // Yellow
+            '#8033ff', // Indigo
+            '#ff8033', // Orange
+            '#33ff80', // Mint
+            '#ff3380', // Rose
+            '#3380ff'  // Royal blue
+        ];
+
+        // Use the hash to select a color from the palette
+        const index = Math.abs(hash) % colors.length;
+        return colors[index];
     }
 
     // Try to load existing routes on page load

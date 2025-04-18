@@ -9,13 +9,16 @@
 - [x] Develop algorithm to suggest new routes based on existing tracks
 - [x] Create API endpoints for frontend to fetch routes
 - [x] Add route filtering by distance/time
+- [x] Add randomization to route generation
+- [x] Implement street-following routes using OSRM API
+- [x] Fix distance calculation and scaling issues
 
 ## Frontend
 - [x] Create basic HTML structure
 - [x] Set up minimal CSS framework
 - [x] Implement file upload interface
 - [x] Integrate Leaflet.js for map visualization
-- [x] Display existing routes on the map
+- [x] Display existing routes on the map with different colors
 - [x] Show suggested new routes
 - [x] Add filtering options for routes
 
@@ -27,8 +30,8 @@
 
 ## Testing
 - [x] Test route suggestion algorithm
-- [ ] Write tests for backend functionality
-- [ ] Ensure proper error handling
+- [x] Write tests for backend functionality
+- [x] Ensure proper error handling
 
 ## Documentation
 - [x] Document API endpoints

@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy the source code
-COPY backend/ ./backend/
+COPY . .
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -o /walkassistant ./backend
@@ -18,6 +18,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /walkassistant ./backend
 FROM alpine:latest
 
 WORKDIR /app
+
+# Install ca-certificates for HTTPS requests (needed for OSRM API)
+RUN apk --no-cache add ca-certificates
 
 # Copy the binary from the builder stage
 COPY --from=builder /walkassistant .
@@ -31,5 +34,5 @@ RUN mkdir -p data
 # Expose port 8080
 EXPOSE 8080
 
-# Run the application
-CMD ["./walkassistant"]
+# Set the entrypoint
+ENTRYPOINT ["./walkassistant"]
