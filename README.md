@@ -18,6 +18,20 @@ Walk Assistant is a web-based tool that helps you explore your neighborhood by s
 
 The screenshot shows the Walk Assistant web interface with the map displaying routes and the controls for generating new routes.
 
+## Privacy & Self-Hosting
+
+GPX files contain detailed information about your walking routes and habits, which can be considered sensitive personal data. This information reveals your location patterns and could be a privacy concern if shared with third parties.
+
+Walk Assistant is designed with privacy in mind:
+
+- **Self-hosted solution**: Run the application on your local computer or within your trusted network
+- **No external services**: Your GPX data never leaves your control (except for using OpenStreetMap for map display)
+- **No tracking**: No analytics or tracking code is included
+- **Data ownership**: You maintain complete ownership and control of your data
+- **Local processing**: All route analysis and suggestions happen locally
+
+We strongly recommend self-hosting this application rather than using cloud-hosted alternatives that might compromise your location privacy. This approach ensures your personal movement data remains private and secure.
+
 ## Getting Started
 
 ### Prerequisites
