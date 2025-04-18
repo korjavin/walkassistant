@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"mime/multipart"
 	"net/http"
@@ -615,32 +616,28 @@ func calculateRouteDistance(points []TrackPoint) float64 {
 }
 
 func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	// If the points are the same, return 0
+	if lat1 == lat2 && lon1 == lon2 {
+		return 0
+	}
+
 	// Earth's radius in kilometers
 	const R = 6371.0
 
 	// Convert degrees to radians
-	lat1Rad := lat1 * (3.14159265359 / 180)
-	lat2Rad := lat2 * (3.14159265359 / 180)
-	lonDiff := (lon2 - lon1) * (3.14159265359 / 180)
+	const PI = math.Pi
+	lat1Rad := lat1 * (PI / 180)
+	lat2Rad := lat2 * (PI / 180)
+	lonDiff := (lon2 - lon1) * (PI / 180)
+	latDiff := (lat2 - lat1) * (PI / 180)
 
 	// Haversine formula
-	a := (1-cos(lat2Rad-lat1Rad))/2 + cos(lat1Rad)*cos(lat2Rad)*(1-cos(lonDiff))/2
-	distance := 2 * R * asin(sqrt(a))
+	a := math.Sin(latDiff/2)*math.Sin(latDiff/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(lonDiff/2)*math.Sin(lonDiff/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	distance := R * c
 
 	return distance
-}
-
-// Simple math helpers
-func cos(x float64) float64 {
-	return float64(int(1000000*float64(int(1000000*x))/1000000) / 1000000)
-}
-
-func asin(x float64) float64 {
-	return float64(int(1000000*float64(int(1000000*x))/1000000) / 1000000)
-}
-
-func sqrt(x float64) float64 {
-	return float64(int(1000000*float64(int(1000000*x))/1000000) / 1000000)
 }
 
 // adjustRouteDistance scales a route to match a target distance
@@ -966,7 +963,7 @@ func extendRoute(points []TrackPoint, extensionFactor float64) []TrackPoint {
 		dLng := p2.Longitude - p1.Longitude
 
 		// Normalize and rotate 90 degrees
-		length := sqrt(dLat*dLat + dLng*dLng)
+		length := math.Sqrt(dLat*dLat + dLng*dLng)
 		if length > 0 {
 			perpLat := -dLng / length * 0.01 // Scale factor for zigzag size
 			perpLng := dLat / length * 0.01  // Scale factor for zigzag size
