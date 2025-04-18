@@ -287,6 +287,10 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 		followStreets = false
 	}
 
+	// Log the parameters for debugging
+	log.Printf("Suggesting routes with parameters: minDistance=%f, maxDistance=%f, followStreets=%t",
+		minDistance, maxDistance, followStreets)
+
 	// Generate suggested routes
 	suggested, err := generateSuggestedRoutes(minDistance, maxDistance, followStreets)
 	if err != nil {
@@ -361,14 +365,19 @@ func generateSuggestedRoutes(minDistance, maxDistance float64, followStreets boo
 	if maxDistance > 0 && distance > maxDistance {
 		// If the route is too long, try to create a shorter route
 		// For simplicity, we'll just use a portion of the perimeter
+		log.Printf("Route exceeds max distance, scaling down from %f km to %f km", distance, maxDistance)
 		scaleFactor := maxDistance / distance
+		log.Printf("Using scale factor: %f for perimeter route", scaleFactor)
 		perimeter = adjustRouteDistance(perimeter, scaleFactor)
 		distance = calculateRouteDistance(perimeter)
+		log.Printf("After scaling, perimeter route distance is now: %f km", distance)
 	} else if minDistance > 0 && distance < minDistance {
 		// If the route is too short, try to create a longer route
 		// For simplicity, we'll add some zigzags to make it longer
+		log.Printf("Route is shorter than min distance, extending from %f km to %f km", distance, minDistance)
 		perimeter = extendRoute(perimeter, minDistance/distance)
 		distance = calculateRouteDistance(perimeter)
+		log.Printf("After extending, route distance is now: %f km", distance)
 	}
 
 	// Create the suggested route
@@ -378,12 +387,178 @@ func generateSuggestedRoutes(minDistance, maxDistance float64, followStreets boo
 		FollowsStreets: false,
 	}
 
+	// Log the initial route distance for debugging
+	log.Printf("Initial route distance: %f km, max distance: %f km", distance, maxDistance)
+
 	// If followStreets is true, try to get a route that follows streets
+	log.Printf("Attempting to create a route that follows streets (followStreets=%t)", followStreets)
 	if followStreets {
 		streetRoute, err := getRouteFollowingStreets(perimeter)
 		if err == nil {
 			// Verify that the street route is within a reasonable distance of the existing routes
 			if isRouteNearExistingRoutes(streetRoute.Points, minLat, maxLat, minLng, maxLng) {
+				// Check if the street route meets the distance criteria
+				streetDistance := streetRoute.Distance
+				log.Printf("Street route distance from OSRM: %f km, max distance: %f km", streetDistance, maxDistance)
+
+				// Make sure we have a valid distance
+				if streetDistance < 0.1 {
+					log.Printf("WARNING: Street route distance is too small (%f km), using estimated distance", streetDistance)
+
+					// Calculate the bounding box of the points to estimate a reasonable distance
+					var minLat, maxLat, minLng, maxLng float64
+					for i, point := range streetRoute.Points {
+						if i == 0 {
+							minLat, maxLat = point.Latitude, point.Latitude
+							minLng, maxLng = point.Longitude, point.Longitude
+							continue
+						}
+						if point.Latitude < minLat {
+							minLat = point.Latitude
+						} else if point.Latitude > maxLat {
+							maxLat = point.Latitude
+						}
+						if point.Longitude < minLng {
+							minLng = point.Longitude
+						} else if point.Longitude > maxLng {
+							maxLng = point.Longitude
+						}
+					}
+
+					// Estimate the perimeter of the bounding box
+					width := haversineDistance(minLat, minLng, minLat, maxLng)
+					height := haversineDistance(minLat, minLng, maxLat, minLng)
+					estimatedDistance := 2 * (width + height)
+
+					streetDistance = estimatedDistance
+					streetRoute.Distance = streetDistance
+					log.Printf("Using estimated street route distance: %f km", streetDistance)
+				}
+
+				if maxDistance > 0 && streetDistance > maxDistance {
+					log.Printf("Street route exceeds max distance (%f km), scaling down to %f km", streetDistance, maxDistance)
+
+					// Try a completely different approach - use the original perimeter points
+					// but create a smaller perimeter that's approximately the right size
+					percentage := maxDistance / streetDistance
+					log.Printf("Need to keep approximately %.2f%% of the route", percentage*100)
+
+					// Get the original perimeter points (the ones we used to create the street route)
+					originalPoints := perimeter   // Use the perimeter points defined above
+					if len(originalPoints) >= 4 { // Need at least 4 points for a rectangle
+						// Calculate the center of the perimeter
+						var centerLat, centerLng float64
+						for _, p := range originalPoints {
+							centerLat += p.Latitude
+							centerLng += p.Longitude
+						}
+						centerLat /= float64(len(originalPoints))
+						centerLng /= float64(len(originalPoints))
+
+						// Create a smaller perimeter by scaling points toward the center
+						// Use a slightly smaller scale factor to account for street routing variations
+						scaleFactor := percentage * 0.8
+						log.Printf("Using scale factor %.4f to create smaller perimeter", scaleFactor)
+
+						var scaledPoints []TrackPoint
+						for _, p := range originalPoints {
+							// Scale the point toward the center
+							newLat := centerLat + (p.Latitude-centerLat)*scaleFactor
+							newLng := centerLng + (p.Longitude-centerLng)*scaleFactor
+							scaledPoints = append(scaledPoints, TrackPoint{Latitude: newLat, Longitude: newLng})
+						}
+
+						// Now get a new street route based on these scaled perimeter points
+						log.Printf("Getting new street route based on scaled perimeter points")
+						newStreetRoute, err := getRouteFollowingStreets(scaledPoints)
+
+						if err == nil {
+							newDistance := newStreetRoute.Distance
+							log.Printf("New street route created with distance: %f km", newDistance)
+
+							if newDistance <= maxDistance*1.1 { // Allow a small margin over max distance
+								// Success! Use the new route
+								streetRoute = newStreetRoute
+								log.Printf("Successfully created a street route within max distance")
+							} else {
+								// Try with an even smaller perimeter
+								log.Printf("New route still exceeds max distance (%f km), trying with smaller perimeter", newDistance)
+
+								// Use an even smaller scale factor
+								scaleFactor = percentage * 0.5
+								log.Printf("Using smaller scale factor %.4f", scaleFactor)
+
+								scaledPoints = []TrackPoint{}
+								for _, p := range originalPoints {
+									// Scale the point toward the center
+									newLat := centerLat + (p.Latitude-centerLat)*scaleFactor
+									newLng := centerLng + (p.Longitude-centerLng)*scaleFactor
+									scaledPoints = append(scaledPoints, TrackPoint{Latitude: newLat, Longitude: newLng})
+								}
+
+								// Try again with the smaller perimeter
+								newStreetRoute, err = getRouteFollowingStreets(scaledPoints)
+								if err == nil && newStreetRoute.Distance <= maxDistance*1.1 {
+									streetRoute = newStreetRoute
+									log.Printf("Created street route with smaller perimeter: %f km", newStreetRoute.Distance)
+								} else {
+									// Try with just a simple rectangle
+									log.Printf("Trying with a simple rectangle around the center")
+
+									// Calculate a small rectangle around the center
+									// Estimate how big it should be based on the max distance
+									// For a 5km max distance, a 0.5km x 0.5km rectangle would give roughly 2km perimeter
+									offset := maxDistance / 10.0 / 111.0 // Convert km to degrees (roughly)
+
+									rectPoints := []TrackPoint{
+										{Latitude: centerLat - offset, Longitude: centerLng - offset},
+										{Latitude: centerLat - offset, Longitude: centerLng + offset},
+										{Latitude: centerLat + offset, Longitude: centerLng + offset},
+										{Latitude: centerLat + offset, Longitude: centerLng - offset},
+										{Latitude: centerLat - offset, Longitude: centerLng - offset}, // Close the loop
+									}
+
+									simpleRoute, err := getRouteFollowingStreets(rectPoints)
+									if err == nil && simpleRoute.Distance <= maxDistance*1.1 {
+										streetRoute = simpleRoute
+										log.Printf("Created simple rectangular street route: %f km", simpleRoute.Distance)
+									} else {
+										// All attempts failed, fall back to mathematical scaling
+										log.Printf("All street routing attempts exceeded max distance, falling back to scaled route")
+										scaleFactor := maxDistance / streetDistance
+										log.Printf("Using scale factor: %f for street route", scaleFactor)
+										streetRoute.Points = adjustRouteDistance(streetRoute.Points, scaleFactor)
+										streetRoute.Distance = calculateRouteDistance(streetRoute.Points)
+										log.Printf("After scaling, street route distance is now: %f km", streetRoute.Distance)
+									}
+								}
+							}
+						} else {
+							log.Printf("Error getting new street route: %v, falling back to scaled route", err)
+							// Fall back to mathematical scaling if the street routing fails
+							scaleFactor := maxDistance / streetDistance
+							log.Printf("Using scale factor: %f for street route", scaleFactor)
+							streetRoute.Points = adjustRouteDistance(streetRoute.Points, scaleFactor)
+							streetRoute.Distance = calculateRouteDistance(streetRoute.Points)
+							log.Printf("After scaling, street route distance is now: %f km", streetRoute.Distance)
+						}
+					} else {
+						// Not enough points in the original perimeter, fall back to scaling
+						log.Printf("Not enough points in original perimeter, falling back to scaled route")
+						scaleFactor := maxDistance / streetDistance
+						log.Printf("Using scale factor: %f for street route", scaleFactor)
+						streetRoute.Points = adjustRouteDistance(streetRoute.Points, scaleFactor)
+						streetRoute.Distance = calculateRouteDistance(streetRoute.Points)
+						log.Printf("After scaling, street route distance is now: %f km", streetRoute.Distance)
+					}
+				} else if minDistance > 0 && streetDistance < minDistance {
+					log.Printf("Street route is shorter than min distance (%f km), extending to %f km", streetDistance, minDistance)
+					// Try to extend the street route
+					streetRoute.Points = extendRoute(streetRoute.Points, minDistance/streetDistance)
+					streetRoute.Distance = calculateRouteDistance(streetRoute.Points)
+					log.Printf("After extending, street route distance is now: %f km", streetRoute.Distance)
+				}
+
 				suggestedRoute.Points = streetRoute.Points
 				suggestedRoute.Distance = streetRoute.Distance
 				suggestedRoute.FollowsStreets = true
@@ -393,6 +568,16 @@ func generateSuggestedRoutes(minDistance, maxDistance float64, followStreets boo
 		} else {
 			log.Printf("Error getting street route: %v", err)
 		}
+	}
+
+	// Log the final route that will be returned
+	log.Printf("FINAL ROUTE: Distance=%f km, FollowsStreets=%t, MaxDistance=%f km",
+		suggestedRoute.Distance, suggestedRoute.FollowsStreets, maxDistance)
+
+	// Verify that the route respects the max distance constraint
+	if maxDistance > 0 && suggestedRoute.Distance > maxDistance {
+		log.Printf("WARNING: Final route distance (%f km) still exceeds max distance (%f km)",
+			suggestedRoute.Distance, maxDistance)
 	}
 
 	return []SuggestedRoute{suggestedRoute}, nil
@@ -446,34 +631,27 @@ func sqrt(x float64) float64 {
 
 // adjustRouteDistance scales a route to match a target distance
 func adjustRouteDistance(points []TrackPoint, scaleFactor float64) []TrackPoint {
-	// For simplicity, we'll just take a portion of the route
-	// In a real implementation, you would use more sophisticated techniques
-	if len(points) <= 2 {
-		return points
+	// Create a new slice to hold the adjusted points
+	adjustedPoints := make([]TrackPoint, len(points))
+
+	// Calculate the centroid of the route
+	centroid := TrackPoint{Latitude: 0, Longitude: 0}
+	for _, p := range points {
+		centroid.Latitude += p.Latitude
+		centroid.Longitude += p.Longitude
+	}
+	centroid.Latitude /= float64(len(points))
+	centroid.Longitude /= float64(len(points))
+
+	// Scale each point relative to the centroid
+	for i, p := range points {
+		adjustedPoints[i] = TrackPoint{
+			Latitude:  centroid.Latitude + (p.Latitude-centroid.Latitude)*scaleFactor,
+			Longitude: centroid.Longitude + (p.Longitude-centroid.Longitude)*scaleFactor,
+		}
 	}
 
-	// If scale factor is close to 1, return the original route
-	if scaleFactor > 0.9 {
-		return points
-	}
-
-	// Calculate how many points to keep
-	numPoints := int(float64(len(points)-1) * scaleFactor)
-	if numPoints < 2 {
-		numPoints = 2
-	}
-
-	// Create a new route with fewer points
-	newPoints := make([]TrackPoint, numPoints)
-	for i := 0; i < numPoints-1; i++ {
-		index := int(float64(i) * float64(len(points)-1) / float64(numPoints-1))
-		newPoints[i] = points[index]
-	}
-
-	// Always include the last point to close the loop
-	newPoints[numPoints-1] = points[len(points)-1]
-
-	return newPoints
+	return adjustedPoints
 }
 
 // getRouteFollowingStreets uses the OSRM API to get a route that follows streets
@@ -523,6 +701,22 @@ func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
 	// Log the response for debugging
 	log.Printf("OSRM API response: %s", string(body))
 
+	// Log the distance from OSRM directly
+	var osrmDistance float64
+	if resp.StatusCode == http.StatusOK {
+		var respMap map[string]interface{}
+		if err := json.Unmarshal(body, &respMap); err == nil {
+			if routes, ok := respMap["routes"].([]interface{}); ok && len(routes) > 0 {
+				if route, ok := routes[0].(map[string]interface{}); ok {
+					if dist, ok := route["distance"].(float64); ok {
+						osrmDistance = dist / 1000.0 // Convert from meters to kilometers
+						log.Printf("OSRM reported distance: %f km", osrmDistance)
+					}
+				}
+			}
+		}
+	}
+
 	// Parse the response
 	var osrmResp OSRMResponse
 	if err := json.Unmarshal(body, &osrmResp); err != nil {
@@ -562,9 +756,56 @@ func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
 		trackPoints = append(trackPoints, trackPoint)
 	}
 
+	// Calculate the actual distance using our haversine function to ensure consistency
+	actualDistance := 0.0
+	if len(trackPoints) >= 2 {
+		actualDistance = calculateRouteDistance(trackPoints)
+		log.Printf("Calculated street route distance: %f km with %d points", actualDistance, len(trackPoints))
+	} else {
+		log.Printf("WARNING: Not enough points to calculate distance. Only %d points available.", len(trackPoints))
+	}
+
+	// Use the OSRM distance as a fallback if our calculation is zero or very small
+	if actualDistance < 0.1 && len(osrmResp.Routes) > 0 {
+		// Get the distance directly from the OSRM response (already in meters)
+		actualDistance = osrmResp.Routes[0].Distance / 1000.0
+		log.Printf("Using OSRM distance as fallback: %f km", actualDistance)
+
+		// If the distance is still too small, use a reasonable default based on the perimeter
+		if actualDistance < 0.1 {
+			// Calculate the bounding box of the points to estimate a reasonable distance
+			var minLat, maxLat, minLng, maxLng float64
+			for i, point := range trackPoints {
+				if i == 0 {
+					minLat, maxLat = point.Latitude, point.Latitude
+					minLng, maxLng = point.Longitude, point.Longitude
+					continue
+				}
+				if point.Latitude < minLat {
+					minLat = point.Latitude
+				} else if point.Latitude > maxLat {
+					maxLat = point.Latitude
+				}
+				if point.Longitude < minLng {
+					minLng = point.Longitude
+				} else if point.Longitude > maxLng {
+					maxLng = point.Longitude
+				}
+			}
+
+			// Estimate the perimeter of the bounding box
+			width := haversineDistance(minLat, minLng, minLat, maxLng)
+			height := haversineDistance(minLat, minLng, maxLat, minLng)
+			estimatedDistance := 2 * (width + height)
+
+			actualDistance = estimatedDistance
+			log.Printf("Using estimated distance based on bounding box: %f km", actualDistance)
+		}
+	}
+
 	return SuggestedRoute{
 		Points:         trackPoints,
-		Distance:       osrmResp.Routes[0].Distance / 1000, // Convert from meters to kilometers
+		Distance:       actualDistance, // Use our calculated distance instead of OSRM's
 		FollowsStreets: true,
 	}, nil
 }

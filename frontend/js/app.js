@@ -106,11 +106,24 @@ document.addEventListener('DOMContentLoaded', function() {
                         className: 'existing-route'
                     });
 
+                    // Calculate route distance if not provided
+                    let routeDistance = route.distance;
+                    if (!routeDistance || routeDistance === 0) {
+                        routeDistance = calculateRouteDistance(points);
+                    }
+
                     polyline.bindPopup(`
                         <strong>${route.filename}</strong><br>
-                        Distance: ${(route.distance).toFixed(2)} km<br>
+                        Distance: ${routeDistance.toFixed(2)} km<br>
                         Duration: ${formatDuration(route.duration)}
                     `);
+
+                    // Show distance when hovering over the route
+                    polyline.bindTooltip(`${routeDistance.toFixed(2)} km`, {
+                        permanent: false,
+                        direction: 'center',
+                        className: 'route-tooltip'
+                    });
 
                     existingRoutesLayer.addLayer(polyline);
                     bounds.extend(polyline.getBounds());
@@ -193,15 +206,34 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Set color and class based on whether the route follows streets
                     const routeColor = route.followsStreets ? 'green' : 'orange';
                     const routeClass = route.followsStreets ? 'suggested-route-streets' : 'suggested-route-direct';
+                    const routeType = route.followsStreets ? 'Streets' : 'Direct';
+
+                    // Calculate route distance if not provided or is zero
+                    let routeDistance = route.distance;
+                    if (!routeDistance || routeDistance === 0) {
+                        routeDistance = calculateRouteDistance(points);
+                    }
+                    const routeDistanceFormatted = routeDistance.toFixed(2);
+
                     const polyline = L.polyline(points, {
                         color: routeColor,
                         weight: 4,
                         className: routeClass
                     });
 
+                    // Add a popup with route information
+                    polyline.bindPopup(`<strong>Route Length:</strong> ${routeDistanceFormatted} km<br><strong>Type:</strong> ${routeType}`);
+
+                    // Show distance when hovering over the route
+                    polyline.bindTooltip(`${routeDistanceFormatted} km`, {
+                        permanent: false,
+                        direction: 'center',
+                        className: 'route-tooltip'
+                    });
+
                     polyline.bindPopup(`
                         <strong>Suggested Route ${index + 1}</strong><br>
-                        Distance: ${(route.distance).toFixed(2)} km<br>
+                        Distance: ${routeDistanceFormatted} km<br>
                         Follows Streets: ${route.followsStreets ? 'Yes' : 'No'}
                     `);
 
@@ -215,7 +247,50 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             map.fitBounds(bounds);
-            showStatus(`Found ${routes.length} suggested routes`, 'success');
+
+            // Display route information in the status message
+            const routeInfo = routes.map((route, index) => {
+                // Calculate route distance if not provided or is zero
+                let routeDistance = route.distance;
+                if (!routeDistance || routeDistance === 0) {
+                    const points = route.points.map(point => [point.lat, point.lng]);
+                    routeDistance = calculateRouteDistance(points);
+                }
+                return `Route ${index + 1}: ${routeDistance.toFixed(2)} km (${route.followsStreets ? 'Streets' : 'Direct'})`;
+            }).join(' | ');
+
+            showStatus(`Found ${routes.length} suggested routes: ${routeInfo}`, 'success');
+
+            // Add a route info panel to the map
+            if (!document.getElementById('route-info-panel')) {
+                const routeInfoPanel = L.control({position: 'topright'});
+
+                routeInfoPanel.onAdd = function(map) {
+                    const div = L.DomUtil.create('div', 'route-info-panel');
+                    div.id = 'route-info-panel';
+                    return div;
+                };
+
+                routeInfoPanel.addTo(map);
+            }
+
+            // Update the route info panel
+            const routeInfoPanel = document.getElementById('route-info-panel');
+            routeInfoPanel.innerHTML = `
+                <h4>Suggested Routes</h4>
+                ${routes.map((route, index) => {
+                    // Calculate route distance if not provided or is zero
+                    let routeDistance = route.distance;
+                    if (!routeDistance || routeDistance === 0) {
+                        const points = route.points.map(point => [point.lat, point.lng]);
+                        routeDistance = calculateRouteDistance(points);
+                    }
+                    return `<div class="route-info-item">
+                        <div class="route-color ${route.followsStreets ? 'green' : 'orange'}"></div>
+                        <span>Route ${index + 1}: ${routeDistance.toFixed(2)} km</span>
+                    </div>`;
+                }).join('')}
+            `;
         })
         .catch(error => {
             showStatus('Error suggesting routes: ' + error.message, 'error');
@@ -253,6 +328,38 @@ document.addEventListener('DOMContentLoaded', function() {
         result += `${secs}s`;
 
         return result;
+    }
+
+    // Helper function to calculate route distance from points
+    function calculateRouteDistance(points) {
+        if (!points || points.length < 2) return 0;
+
+        let distance = 0;
+        for (let i = 0; i < points.length - 1; i++) {
+            distance += haversineDistance(
+                points[i][0], points[i][1],
+                points[i+1][0], points[i+1][1]
+            );
+        }
+        return distance;
+    }
+
+    // Haversine formula to calculate distance between two points
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+        // Earth's radius in kilometers
+        const R = 6371.0;
+
+        // Convert degrees to radians
+        const lat1Rad = lat1 * (Math.PI / 180);
+        const lat2Rad = lat2 * (Math.PI / 180);
+        const lonDiff = (lon2 - lon1) * (Math.PI / 180);
+
+        // Haversine formula
+        const a = (1 - Math.cos(lat2Rad - lat1Rad)) / 2 +
+                  Math.cos(lat1Rad) * Math.cos(lat2Rad) * (1 - Math.cos(lonDiff)) / 2;
+        const distance = 2 * R * Math.asin(Math.sqrt(a));
+
+        return distance;
     }
 
     // Try to load existing routes on page load

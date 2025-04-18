@@ -59,38 +59,55 @@ header, footer {
     color: orange;
 }
 
-/* Legend */
-.map-legend {
+/* Legend and Info Panels */
+.map-legend, .route-info-panel {
     background-color: white;
     padding: 10px;
     border-radius: 5px;
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     margin-bottom: 10px;
+    min-width: 200px;
 }
 
-.legend-item {
+.legend-item, .route-info-item {
     display: flex;
     align-items: center;
     margin-bottom: 5px;
 }
 
-.legend-color {
+.legend-color, .route-color {
     width: 20px;
     height: 10px;
     margin-right: 8px;
     border-radius: 2px;
 }
 
-.legend-color.blue {
+.legend-color.blue, .route-color.blue {
     background-color: blue;
 }
 
-.legend-color.green {
+.legend-color.green, .route-color.green {
     background-color: green;
 }
 
-.legend-color.orange {
+.legend-color.orange, .route-color.orange {
     background-color: orange;
+}
+
+.route-info-panel h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+/* Route tooltip */
+.route-tooltip {
+    background-color: rgba(255, 255, 255, 0.8);
+    border: 1px solid #ccc;
+    padding: 5px 10px;
+    font-weight: bold;
+    font-size: 14px;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.2);
 }
 
 /* Responsive adjustments */
