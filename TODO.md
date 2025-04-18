@@ -26,8 +26,8 @@
 - [x] Write comprehensive README.md
 
 ## Testing
+- [x] Test route suggestion algorithm
 - [ ] Write tests for backend functionality
-- [ ] Test route suggestion algorithm
 - [ ] Ensure proper error handling
 
 ## Documentation

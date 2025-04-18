@@ -31,8 +31,22 @@ type TrackPoint struct {
 
 // SuggestedRoute represents a suggested new route
 type SuggestedRoute struct {
-	Points   []TrackPoint `json:"points"`
-	Distance float64      `json:"distance"`
+	Points         []TrackPoint `json:"points"`
+	Distance       float64      `json:"distance"`
+	FollowsStreets bool         `json:"followsStreets"`
+}
+
+// OSRMResponse represents the response from the OSRM API
+type OSRMResponse struct {
+	Code   string `json:"code"`
+	Routes []struct {
+		Geometry string  `json:"geometry"`
+		Distance float64 `json:"distance"`
+		Duration float64 `json:"duration"`
+	} `json:"routes"`
+	Waypoints []struct {
+		Location []float64 `json:"location"`
+	} `json:"waypoints"`
 }
 
 // Global storage for processed routes
@@ -261,15 +275,20 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	// Get query parameters for filtering
 	minDistance := 0.0
 	maxDistance := 0.0
+	followStreets := true // Default to following streets
+
 	if r.URL.Query().Get("minDistance") != "" {
 		fmt.Sscanf(r.URL.Query().Get("minDistance"), "%f", &minDistance)
 	}
 	if r.URL.Query().Get("maxDistance") != "" {
 		fmt.Sscanf(r.URL.Query().Get("maxDistance"), "%f", &maxDistance)
 	}
+	if r.URL.Query().Get("followStreets") == "false" {
+		followStreets = false
+	}
 
 	// Generate suggested routes
-	suggested, err := generateSuggestedRoutes(minDistance, maxDistance)
+	suggested, err := generateSuggestedRoutes(minDistance, maxDistance, followStreets)
 	if err != nil {
 		http.Error(w, "Unable to generate suggested routes", http.StatusInternalServerError)
 		return
@@ -279,7 +298,7 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(suggested)
 }
 
-func generateSuggestedRoutes(minDistance, maxDistance float64) ([]SuggestedRoute, error) {
+func generateSuggestedRoutes(minDistance, maxDistance float64, followStreets bool) ([]SuggestedRoute, error) {
 	routesMutex.RLock()
 	defer routesMutex.RUnlock()
 
@@ -339,17 +358,39 @@ func generateSuggestedRoutes(minDistance, maxDistance float64) ([]SuggestedRoute
 	distance := calculateRouteDistance(perimeter)
 
 	// Apply distance filters if specified
-	if (maxDistance > 0 && distance > maxDistance) || (minDistance > 0 && distance < minDistance) {
-		// If the route doesn't meet the distance criteria, return empty
-		return []SuggestedRoute{}, nil
+	if maxDistance > 0 && distance > maxDistance {
+		// If the route is too long, try to create a shorter route
+		// For simplicity, we'll just use a portion of the perimeter
+		scaleFactor := maxDistance / distance
+		perimeter = adjustRouteDistance(perimeter, scaleFactor)
+		distance = calculateRouteDistance(perimeter)
+	} else if minDistance > 0 && distance < minDistance {
+		// If the route is too short, try to create a longer route
+		// For simplicity, we'll add some zigzags to make it longer
+		perimeter = extendRoute(perimeter, minDistance/distance)
+		distance = calculateRouteDistance(perimeter)
 	}
 
-	return []SuggestedRoute{
-		{
-			Points:   perimeter,
-			Distance: distance,
-		},
-	}, nil
+	// Create the suggested route
+	suggestedRoute := SuggestedRoute{
+		Points:         perimeter,
+		Distance:       distance,
+		FollowsStreets: false,
+	}
+
+	// If followStreets is true, try to get a route that follows streets
+	if followStreets {
+		streetRoute, err := getRouteFollowingStreets(perimeter)
+		if err == nil {
+			suggestedRoute.Points = streetRoute.Points
+			suggestedRoute.Distance = streetRoute.Distance
+			suggestedRoute.FollowsStreets = true
+		} else {
+			log.Printf("Error getting street route: %v", err)
+		}
+	}
+
+	return []SuggestedRoute{suggestedRoute}, nil
 }
 
 func calculateRouteDistance(points []TrackPoint) float64 {
@@ -396,4 +437,217 @@ func asin(x float64) float64 {
 
 func sqrt(x float64) float64 {
 	return float64(int(1000000*float64(int(1000000*x))/1000000) / 1000000)
+}
+
+// adjustRouteDistance scales a route to match a target distance
+func adjustRouteDistance(points []TrackPoint, scaleFactor float64) []TrackPoint {
+	// For simplicity, we'll just take a portion of the route
+	// In a real implementation, you would use more sophisticated techniques
+	if len(points) <= 2 {
+		return points
+	}
+
+	// If scale factor is close to 1, return the original route
+	if scaleFactor > 0.9 {
+		return points
+	}
+
+	// Calculate how many points to keep
+	numPoints := int(float64(len(points)-1) * scaleFactor)
+	if numPoints < 2 {
+		numPoints = 2
+	}
+
+	// Create a new route with fewer points
+	newPoints := make([]TrackPoint, numPoints)
+	for i := 0; i < numPoints-1; i++ {
+		index := int(float64(i) * float64(len(points)-1) / float64(numPoints-1))
+		newPoints[i] = points[index]
+	}
+
+	// Always include the last point to close the loop
+	newPoints[numPoints-1] = points[len(points)-1]
+
+	return newPoints
+}
+
+// getRouteFollowingStreets uses the OSRM API to get a route that follows streets
+func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
+	// Use the OSRM API to get a route that follows streets
+	// We'll use the public OSRM demo server for this example
+	// In a production environment, you would want to host your own OSRM server
+	osrmServer := "https://router.project-osrm.org"
+
+	// Build the coordinates string for the OSRM API
+	// Format: lon1,lat1;lon2,lat2;...
+	var coordsBuilder strings.Builder
+	for i, point := range points {
+		if i > 0 {
+			coordsBuilder.WriteString(";")
+		}
+		coordsBuilder.WriteString(fmt.Sprintf("%f,%f", point.Longitude, point.Latitude))
+	}
+
+	// Build the OSRM API URL
+	// We're using the "route" service with the "walking" profile
+	url := fmt.Sprintf("%s/route/v1/walking/%s?overview=full&geometries=polyline",
+		osrmServer, coordsBuilder.String())
+
+	// Make the request to the OSRM API
+	resp, err := http.Get(url)
+	if err != nil {
+		return SuggestedRoute{}, err
+	}
+	defer resp.Body.Close()
+
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return SuggestedRoute{}, err
+	}
+
+	// Parse the response
+	var osrmResp OSRMResponse
+	if err := json.Unmarshal(body, &osrmResp); err != nil {
+		return SuggestedRoute{}, err
+	}
+
+	// Check if the OSRM API returned a route
+	if osrmResp.Code != "Ok" || len(osrmResp.Routes) == 0 {
+		return SuggestedRoute{}, fmt.Errorf("OSRM API did not return a valid route")
+	}
+
+	// Decode the polyline geometry
+	decodedPoints := decodePolyline(osrmResp.Routes[0].Geometry)
+
+	// Convert the decoded points to TrackPoints
+	var trackPoints []TrackPoint
+	for _, point := range decodedPoints {
+		trackPoints = append(trackPoints, TrackPoint{
+			Latitude:  point[0],
+			Longitude: point[1],
+		})
+	}
+
+	return SuggestedRoute{
+		Points:         trackPoints,
+		Distance:       osrmResp.Routes[0].Distance / 1000, // Convert from meters to kilometers
+		FollowsStreets: true,
+	}, nil
+}
+
+// decodePolyline decodes a polyline string into a slice of [lat, lng] coordinates
+func decodePolyline(polyline string) [][]float64 {
+	var coordinates [][]float64
+	index, lat, lng := 0, 0, 0
+
+	for index < len(polyline) {
+		result, shift := 1, 0
+		var b int
+
+		// Decode latitude
+		for {
+			b = int(polyline[index]) - 63
+			index++
+			result += (b & 0x1f) << shift
+			shift += 5
+			if b < 0x20 {
+				break
+			}
+		}
+
+		if (result & 1) != 0 {
+			lat += ^(result >> 1)
+		} else {
+			lat += result >> 1
+		}
+
+		result, shift = 1, 0
+
+		// Decode longitude
+		for {
+			b = int(polyline[index]) - 63
+			index++
+			result += (b & 0x1f) << shift
+			shift += 5
+			if b < 0x20 {
+				break
+			}
+		}
+
+		if (result & 1) != 0 {
+			lng += ^(result >> 1)
+		} else {
+			lng += result >> 1
+		}
+
+		lat_f := float64(lat) / 1e5
+		lng_f := float64(lng) / 1e5
+		coordinates = append(coordinates, []float64{lat_f, lng_f})
+	}
+
+	return coordinates
+}
+
+// extendRoute makes a route longer by adding zigzags
+func extendRoute(points []TrackPoint, extensionFactor float64) []TrackPoint {
+	// For simplicity, we'll add zigzags to the route
+	// In a real implementation, you would use more sophisticated techniques
+	if len(points) <= 2 || extensionFactor <= 1.0 {
+		return points
+	}
+
+	// Calculate how many zigzags to add
+	numZigzags := int(extensionFactor) - 1
+	if numZigzags < 1 {
+		numZigzags = 1
+	}
+
+	// Create a new route with zigzags
+	var newPoints []TrackPoint
+
+	// Add zigzags between each pair of points
+	for i := 0; i < len(points)-1; i++ {
+		p1 := points[i]
+		p2 := points[i+1]
+
+		// Add the first point
+		newPoints = append(newPoints, p1)
+
+		// Calculate the midpoint
+		midLat := (p1.Latitude + p2.Latitude) / 2
+		midLng := (p1.Longitude + p2.Longitude) / 2
+
+		// Calculate perpendicular direction
+		dLat := p2.Latitude - p1.Latitude
+		dLng := p2.Longitude - p1.Longitude
+
+		// Normalize and rotate 90 degrees
+		length := sqrt(dLat*dLat + dLng*dLng)
+		if length > 0 {
+			perpLat := -dLng / length * 0.01 // Scale factor for zigzag size
+			perpLng := dLat / length * 0.01  // Scale factor for zigzag size
+
+			// Add zigzags
+			for j := 0; j < numZigzags; j++ {
+				// Alternate zigzag direction
+				direction := 1.0
+				if j%2 == 1 {
+					direction = -1.0
+				}
+
+				// Add a point in the zigzag
+				zigzagPoint := TrackPoint{
+					Latitude:  midLat + perpLat*direction,
+					Longitude: midLng + perpLng*direction,
+				}
+				newPoints = append(newPoints, zigzagPoint)
+			}
+		}
+	}
+
+	// Add the last point
+	newPoints = append(newPoints, points[len(points)-1])
+
+	return newPoints
 }
