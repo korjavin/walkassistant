@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Walk Assistant</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
+          crossorigin=""/>
+    
+    <!-- Minimal CSS Framework - Water.css -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Walk Assistant</h1>
+        <p>Upload your GPX tracks and discover new routes in your neighborhood</p>
+    </header>
+
+    <main>
+        <section id="upload-section">
+            <h2>Upload GPX Track</h2>
+            <form id="upload-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="gpx-file">Select GPX file:</label>
+                    <input type="file" id="gpx-file" name="gpxfile" accept=".gpx" required>
+                </div>
+                <button type="submit" id="upload-button">Upload</button>
+            </form>
+            <div id="upload-status"></div>
+        </section>
+
+        <section id="map-section">
+            <h2>Map</h2>
+            <div id="map-container"></div>
+            
+            <div id="route-controls">
+                <h3>Route Options</h3>
+                <div class="form-group">
+                    <label for="min-distance">Min Distance (km):</label>
+                    <input type="number" id="min-distance" min="0" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="max-distance">Max Distance (km):</label>
+                    <input type="number" id="max-distance" min="0" step="0.1">
+                </div>
+                <button id="suggest-button">Suggest New Routes</button>
+                <button id="show-existing-button">Show Existing Routes</button>
+                <button id="clear-map-button">Clear Map</button>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2023 Walk Assistant | <a href="https://github.com/korjavin/walkassistant" target="_blank">GitHub</a></p>
+    </footer>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
+            crossorigin=""></script>
+    
+    <!-- Custom JS -->
+    <script src="js/app.js"></script>
+</body>
+</html>

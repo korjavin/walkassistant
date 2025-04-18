@@ -1,0 +1,63 @@
+/* Custom styles for Walk Assistant */
+
+/* General layout */
+body {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header, footer {
+    text-align: center;
+}
+
+/* Map container */
+#map-container {
+    height: 500px;
+    width: 100%;
+    margin: 20px 0;
+    border-radius: 5px;
+}
+
+/* Form styling */
+.form-group {
+    margin-bottom: 15px;
+}
+
+/* Route controls */
+#route-controls {
+    margin-top: 20px;
+}
+
+/* Status messages */
+#upload-status {
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 5px;
+}
+
+.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.error {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+/* Route colors */
+.existing-route {
+    color: blue;
+}
+
+.suggested-route {
+    color: green;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #map-container {
+        height: 300px;
+    }
+}
