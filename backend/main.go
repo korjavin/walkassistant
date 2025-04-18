@@ -294,7 +294,17 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 		minDistance, maxDistance, followStreets)
 
 	// Generate suggested routes
-	suggested, err := generateSuggestedRoutes(minDistance, maxDistance, followStreets)
+	var suggested []SuggestedRoute
+	var err error
+
+	// If we need a route with a minimum distance and following streets, use a specialized function
+	if minDistance > 0 && followStreets {
+		log.Printf("Using specialized function to generate a route with minimum distance %f km that follows streets", minDistance)
+		suggested, err = generateRouteWithMinDistance(minDistance)
+	} else {
+		suggested, err = generateSuggestedRoutes(minDistance, maxDistance, followStreets)
+	}
+
 	if err != nil {
 		http.Error(w, "Unable to generate suggested routes", http.StatusInternalServerError)
 		return
@@ -568,17 +578,171 @@ func generateSuggestedRoutes(minDistance, maxDistance float64, followStreets boo
 					}
 				} else if minDistance > 0 && streetDistance < minDistance {
 					log.Printf("Street route is shorter than min distance (%f km), extending to %f km", streetDistance, minDistance)
-					// Try to extend the street route
-					streetRoute.Points = extendRoute(streetRoute.Points, minDistance/streetDistance)
-					streetRoute.Distance = calculateRouteDistance(streetRoute.Points)
-					log.Printf("After extending, street route distance is now: %f km", streetRoute.Distance)
+
+					// Instead of using zigzags which break the street following,
+					// try to get a new street route with a larger perimeter
+
+					// Calculate the center of the existing routes
+					var centerLat, centerLng float64
+					totalPoints := 0
+
+					// First try to use existing routes for the center
+					routesMutex.RLock()
+					for _, route := range routes {
+						for _, point := range route.TrackPoints {
+							centerLat += point.Latitude
+							centerLng += point.Longitude
+							totalPoints++
+						}
+					}
+					routesMutex.RUnlock()
+
+					// If no existing routes, use the perimeter
+					if totalPoints == 0 {
+						for _, p := range perimeter {
+							centerLat += p.Latitude
+							centerLng += p.Longitude
+						}
+						centerLat /= float64(len(perimeter))
+						centerLng /= float64(len(perimeter))
+					} else {
+						centerLat /= float64(totalPoints)
+						centerLng /= float64(totalPoints)
+					}
+
+					// Create a polygon around the center point
+					// Estimate how far we need to go to get the desired distance
+					// 1 degree is roughly 111 km, so we calculate an appropriate offset
+					offset := math.Sqrt(minDistance/10.0) / 111.0 // Convert km to degrees
+
+					// Create a polygon with a small number of points (to avoid OSRM API limits)
+					numPoints := 5 // Use a pentagon
+					var polygonPoints []TrackPoint
+
+					// Create the polygon
+					for i := 0; i < numPoints; i++ {
+						angle := 2.0 * math.Pi * float64(i) / float64(numPoints)
+						polygonPoints = append(polygonPoints, TrackPoint{
+							Latitude:  centerLat + offset*math.Sin(angle),
+							Longitude: centerLng + offset*math.Cos(angle),
+						})
+					}
+
+					// Close the loop
+					polygonPoints = append(polygonPoints, polygonPoints[0])
+
+					// Try to get a street route with these polygon points
+					log.Printf("Trying to get a longer street route with %d polygon points", len(polygonPoints))
+					// Force the route to be near existing routes
+					newStreetRoute, err := getRouteFollowingStreets(polygonPoints)
+					// Skip the check for isRouteNearExistingRoutes since we're deliberately creating a route
+					// that might be outside the existing area
+
+					// If successful and meets the minimum distance
+					if err == nil && newStreetRoute.Distance >= minDistance {
+						// Success!
+						streetRoute = newStreetRoute
+						log.Printf("Created longer street route with polygon: %f km", newStreetRoute.Distance)
+					} else {
+						// If that didn't work, try with a larger polygon
+						log.Printf("First attempt failed, trying with a larger polygon")
+
+						// Double the offset for a larger polygon
+						offset *= 2.0
+						polygonPoints = []TrackPoint{}
+
+						// Create the larger polygon
+						for i := 0; i < numPoints; i++ {
+							angle := 2.0 * math.Pi * float64(i) / float64(numPoints)
+							polygonPoints = append(polygonPoints, TrackPoint{
+								Latitude:  centerLat + offset*math.Sin(angle),
+								Longitude: centerLng + offset*math.Cos(angle),
+							})
+						}
+
+						// Close the loop
+						polygonPoints = append(polygonPoints, polygonPoints[0])
+
+						// Try again with the larger polygon
+						log.Printf("Trying with a larger polygon of %d points", len(polygonPoints))
+						// Force the route to be near existing routes
+						newStreetRoute, err = getRouteFollowingStreets(polygonPoints)
+						// Skip the check for isRouteNearExistingRoutes since we're deliberately creating a route
+						// that might be outside the existing area
+
+						if err == nil && newStreetRoute.Distance >= minDistance {
+							// Success!
+							streetRoute = newStreetRoute
+							log.Printf("Created longer street route with larger polygon: %f km", newStreetRoute.Distance)
+						} else {
+							// If all else fails, create a simple route with just a few points
+							log.Printf("Polygon attempts failed, trying with a simple route")
+
+							// Create a simple route with just two points far enough apart
+							offset = math.Sqrt(minDistance/2.0) / 111.0
+							simplePoints := []TrackPoint{
+								{Latitude: centerLat - offset, Longitude: centerLng - offset},
+								{Latitude: centerLat + offset, Longitude: centerLng + offset},
+							}
+
+							// Try with the simple route
+							log.Printf("Trying with a simple 2-point route")
+							// Force the route to be near existing routes
+							newStreetRoute, err = getRouteFollowingStreets(simplePoints)
+							// Skip the check for isRouteNearExistingRoutes since we're deliberately creating a route
+							// that might be outside the existing area
+
+							if err == nil && newStreetRoute.Distance >= minDistance {
+								// Success!
+								streetRoute = newStreetRoute
+								log.Printf("Created longer street route with simple points: %f km", newStreetRoute.Distance)
+							} else {
+								// If all attempts fail, try one more time with a larger area
+								log.Printf("All street routing attempts failed, trying with a much larger area")
+
+								// Create a simple route with just two points far enough apart
+								offset = math.Sqrt(minDistance) / 111.0 // Use a larger offset
+								simplePoints := []TrackPoint{
+									{Latitude: centerLat - offset, Longitude: centerLng - offset},
+									{Latitude: centerLat + offset, Longitude: centerLng + offset},
+								}
+
+								// Try with the simple route
+								log.Printf("Trying with a simple 2-point route with large offset: %f", offset)
+								newStreetRoute, err = getRouteFollowingStreets(simplePoints)
+
+								if err == nil && newStreetRoute.Distance >= minDistance {
+									// Success!
+									streetRoute = newStreetRoute
+									log.Printf("Created longer street route with large offset: %f km", newStreetRoute.Distance)
+								} else {
+									// If all attempts fail, fall back to the zigzag method
+									log.Printf("All street routing attempts failed, falling back to zigzag extension")
+									streetRoute.Points = extendRoute(streetRoute.Points, minDistance/streetDistance)
+									streetRoute.Distance = calculateRouteDistance(streetRoute.Points)
+									log.Printf("After extending with zigzags, street route distance is now: %f km", streetRoute.Distance)
+									// Note that this will lose the street-following property
+									streetRoute.FollowsStreets = false
+								}
+							}
+						}
+					}
+
 				}
 
-				suggestedRoute.Points = streetRoute.Points
-				suggestedRoute.Distance = streetRoute.Distance
-				suggestedRoute.FollowsStreets = true
-			} else {
-				log.Printf("Street route is too far from existing routes, using perimeter route instead")
+				// If we're extending to meet minimum distance, always use the street route
+				if minDistance > 0 && streetDistance < minDistance {
+					log.Printf("Using street route even though it's outside existing area because we're extending to meet minimum distance")
+					suggestedRoute.Points = streetRoute.Points
+					suggestedRoute.Distance = streetRoute.Distance
+					suggestedRoute.FollowsStreets = true
+				} else if isRouteNearExistingRoutes(streetRoute.Points, minLat, maxLat, minLng, maxLng) {
+					suggestedRoute.Points = streetRoute.Points
+					suggestedRoute.Distance = streetRoute.Distance
+					suggestedRoute.FollowsStreets = true
+				} else {
+					log.Printf("Street route is too far from existing routes, using perimeter route instead")
+				}
 			}
 		} else {
 			log.Printf("Error getting street route: %v", err)
@@ -671,6 +835,30 @@ func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
 	// We'll use the public OSRM demo server for this example
 	// In a production environment, you would want to host your own OSRM server
 	osrmServer := "https://router.project-osrm.org"
+
+	// OSRM API has a limit of 500 waypoints
+	// If we have more than 100 points, sample them to reduce the number
+	if len(points) > 100 {
+		log.Printf("Too many points (%d), sampling to reduce", len(points))
+		// Sample the points to reduce the number
+		sampledPoints := []TrackPoint{}
+		step := len(points) / 100
+		if step < 1 {
+			step = 1
+		}
+
+		for i := 0; i < len(points); i += step {
+			sampledPoints = append(sampledPoints, points[i])
+		}
+
+		// Make sure we include the last point
+		if len(sampledPoints) > 0 && sampledPoints[len(sampledPoints)-1] != points[len(points)-1] {
+			sampledPoints = append(sampledPoints, points[len(points)-1])
+		}
+
+		points = sampledPoints
+		log.Printf("Reduced to %d points", len(points))
+	}
 
 	// Log the input points for debugging
 	log.Printf("Input points for street routing: %+v", points)

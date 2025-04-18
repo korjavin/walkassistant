@@ -9,7 +9,8 @@ Walk Assistant is a web-based tool that helps you explore your neighborhood by s
 - **Discover New Routes**: Get suggestions for new routes that help you explore unexplored areas
 - **Filter Routes**: Filter suggested routes based on minimum and maximum distance
 - **Street-Following Routes**: Generate routes that follow actual streets and paths
-- **Distance Constraints**: Set maximum distance limits for your walks
+- **Distance Constraints**: Set minimum and maximum distance limits for your walks
+- **Route Randomization**: Get varied route suggestions each time you use the app
 
 ## Screenshots
 
@@ -97,3 +98,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - [OpenStreetMap](https://www.openstreetmap.org/) - Map data
 - [OSRM](http://project-osrm.org/) - Open Source Routing Machine for street-following routes
 - [Water.css](https://watercss.kognise.dev/) - Minimal CSS framework
+
+## Recent Updates
+
+- **Route Generation Improvements**: Added better handling of OSRM API limits (max 500 waypoints)
+- **Minimum Distance Routes**: Improved algorithm for generating routes that meet minimum distance requirements
+- **Street Following**: Enhanced street-following capabilities for extended routes

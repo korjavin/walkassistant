@@ -12,6 +12,8 @@
 - [x] Add randomization to route generation
 - [x] Implement street-following routes using OSRM API
 - [x] Fix distance calculation and scaling issues
+- [x] Handle OSRM API limits (max 500 waypoints)
+- [x] Improve minimum distance route generation with street following
 
 ## Frontend
 - [x] Create basic HTML structure
@@ -32,7 +34,15 @@
 - [x] Test route suggestion algorithm
 - [x] Write tests for backend functionality
 - [x] Ensure proper error handling
+- [ ] Add unit tests for new route generation functions
 
 ## Documentation
 - [x] Document API endpoints
 - [x] Create user guide
+- [ ] Update API documentation with new parameters
+
+## Future Improvements
+- [ ] Add more route generation algorithms
+- [ ] Implement user preferences for route types
+- [ ] Add elevation data to route suggestions
+- [ ] Improve visualization with route statistics
