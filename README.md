@@ -14,7 +14,9 @@ Walk Assistant is a web-based tool that helps you explore your neighborhood by s
 
 ## Screenshots
 
-(Screenshots will be added once the application is fully implemented)
+![Walk Assistant Screenshot](img/screen.png)
+
+The screenshot shows the Walk Assistant web interface with the map displaying routes and the controls for generating new routes.
 
 ## Getting Started
 
