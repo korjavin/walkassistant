@@ -382,9 +382,14 @@ func generateSuggestedRoutes(minDistance, maxDistance float64, followStreets boo
 	if followStreets {
 		streetRoute, err := getRouteFollowingStreets(perimeter)
 		if err == nil {
-			suggestedRoute.Points = streetRoute.Points
-			suggestedRoute.Distance = streetRoute.Distance
-			suggestedRoute.FollowsStreets = true
+			// Verify that the street route is within a reasonable distance of the existing routes
+			if isRouteNearExistingRoutes(streetRoute.Points, minLat, maxLat, minLng, maxLng) {
+				suggestedRoute.Points = streetRoute.Points
+				suggestedRoute.Distance = streetRoute.Distance
+				suggestedRoute.FollowsStreets = true
+			} else {
+				log.Printf("Street route is too far from existing routes, using perimeter route instead")
+			}
 		} else {
 			log.Printf("Error getting street route: %v", err)
 		}
@@ -478,8 +483,12 @@ func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
 	// In a production environment, you would want to host your own OSRM server
 	osrmServer := "https://router.project-osrm.org"
 
+	// Log the input points for debugging
+	log.Printf("Input points for street routing: %+v", points)
+
 	// Build the coordinates string for the OSRM API
 	// Format: lon1,lat1;lon2,lat2;...
+	// OSRM API expects coordinates in [longitude, latitude] order
 	var coordsBuilder strings.Builder
 	for i, point := range points {
 		if i > 0 {
@@ -493,9 +502,13 @@ func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
 	url := fmt.Sprintf("%s/route/v1/walking/%s?overview=full&geometries=polyline",
 		osrmServer, coordsBuilder.String())
 
+	// Log the URL for debugging
+	log.Printf("OSRM API URL: %s", url)
+
 	// Make the request to the OSRM API
 	resp, err := http.Get(url)
 	if err != nil {
+		log.Printf("Error making OSRM API request: %v", err)
 		return SuggestedRoute{}, err
 	}
 	defer resp.Body.Close()
@@ -503,30 +516,50 @@ func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
 	// Read the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Error reading OSRM API response: %v", err)
 		return SuggestedRoute{}, err
 	}
+
+	// Log the response for debugging
+	log.Printf("OSRM API response: %s", string(body))
 
 	// Parse the response
 	var osrmResp OSRMResponse
 	if err := json.Unmarshal(body, &osrmResp); err != nil {
+		log.Printf("Error parsing OSRM API response: %v", err)
 		return SuggestedRoute{}, err
 	}
 
 	// Check if the OSRM API returned a route
 	if osrmResp.Code != "Ok" || len(osrmResp.Routes) == 0 {
+		log.Printf("OSRM API did not return a valid route: %s", osrmResp.Code)
 		return SuggestedRoute{}, fmt.Errorf("OSRM API did not return a valid route")
 	}
 
 	// Decode the polyline geometry
 	decodedPoints := decodePolyline(osrmResp.Routes[0].Geometry)
 
+	// Log the decoded points for debugging
+	log.Printf("Decoded %d points from polyline", len(decodedPoints))
+	if len(decodedPoints) > 0 {
+		log.Printf("First point: %v, Last point: %v", decodedPoints[0], decodedPoints[len(decodedPoints)-1])
+	}
+
 	// Convert the decoded points to TrackPoints
+	// Note: OSRM returns points in [longitude, latitude] format in the API response
+	// but our polyline decoder returns them in [latitude, longitude] format
 	var trackPoints []TrackPoint
 	for _, point := range decodedPoints {
-		trackPoints = append(trackPoints, TrackPoint{
+		// Create a new TrackPoint with the correct coordinates
+		trackPoint := TrackPoint{
 			Latitude:  point[0],
 			Longitude: point[1],
-		})
+		}
+
+		// Log each track point for debugging
+		log.Printf("Adding track point: %+v", trackPoint)
+
+		trackPoints = append(trackPoints, trackPoint)
 	}
 
 	return SuggestedRoute{
@@ -538,55 +571,110 @@ func getRouteFollowingStreets(points []TrackPoint) (SuggestedRoute, error) {
 
 // decodePolyline decodes a polyline string into a slice of [lat, lng] coordinates
 func decodePolyline(polyline string) [][]float64 {
+	// Implementation of the Google polyline algorithm
+	// See: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
 	var coordinates [][]float64
-	index, lat, lng := 0, 0, 0
+	index := 0
+	lat, lng := 0, 0
 
 	for index < len(polyline) {
-		result, shift := 1, 0
+		// Decode latitude
+		latResult, latShift := 0, 0
 		var b int
 
-		// Decode latitude
 		for {
+			if index >= len(polyline) {
+				break
+			}
 			b = int(polyline[index]) - 63
 			index++
-			result += (b & 0x1f) << shift
-			shift += 5
+			latResult |= (b & 0x1f) << latShift
+			latShift += 5
 			if b < 0x20 {
 				break
 			}
 		}
 
-		if (result & 1) != 0 {
-			lat += ^(result >> 1)
+		latChange := latResult
+		if (latResult & 1) == 1 {
+			latChange = ^(latResult >> 1)
 		} else {
-			lat += result >> 1
+			latChange = latResult >> 1
 		}
 
-		result, shift = 1, 0
+		lat += latChange
 
 		// Decode longitude
+		lngResult, lngShift := 0, 0
+
 		for {
+			if index >= len(polyline) {
+				break
+			}
 			b = int(polyline[index]) - 63
 			index++
-			result += (b & 0x1f) << shift
-			shift += 5
+			lngResult |= (b & 0x1f) << lngShift
+			lngShift += 5
 			if b < 0x20 {
 				break
 			}
 		}
 
-		if (result & 1) != 0 {
-			lng += ^(result >> 1)
+		lngChange := lngResult
+		if (lngResult & 1) == 1 {
+			lngChange = ^(lngResult >> 1)
 		} else {
-			lng += result >> 1
+			lngChange = lngResult >> 1
 		}
 
+		lng += lngChange
+
+		// Convert to floating point and add to coordinates
 		lat_f := float64(lat) / 1e5
 		lng_f := float64(lng) / 1e5
+
+		// No need to fix negative coordinates anymore - our decoder is working correctly now
+
+		// Log each coordinate for debugging
+		log.Printf("Decoded coordinate: [%f, %f]", lat_f, lng_f)
+
+		// OSRM returns coordinates in [longitude, latitude] order, but we need [latitude, longitude]
 		coordinates = append(coordinates, []float64{lat_f, lng_f})
 	}
 
 	return coordinates
+}
+
+// isRouteNearExistingRoutes checks if a route is within a reasonable distance of existing routes
+func isRouteNearExistingRoutes(points []TrackPoint, minLat, maxLat, minLng, maxLng float64) bool {
+	// Calculate the bounding box of the existing routes with some padding
+	latPadding := (maxLat - minLat) * 0.5 // 50% padding
+	lngPadding := (maxLng - minLng) * 0.5 // 50% padding
+
+	minLatWithPadding := minLat - latPadding
+	maxLatWithPadding := maxLat + latPadding
+	minLngWithPadding := minLng - lngPadding
+	maxLngWithPadding := maxLng + lngPadding
+
+	// Log the bounding box for debugging
+	log.Printf("Existing routes bounding box with padding: [%f,%f,%f,%f]",
+		minLatWithPadding, maxLatWithPadding, minLngWithPadding, maxLngWithPadding)
+
+	// Check if at least 50% of the points are within the padded bounding box
+	pointsInBounds := 0
+	for _, point := range points {
+		if point.Latitude >= minLatWithPadding && point.Latitude <= maxLatWithPadding &&
+			point.Longitude >= minLngWithPadding && point.Longitude <= maxLngWithPadding {
+			pointsInBounds++
+		}
+	}
+
+	// Calculate the percentage of points in bounds
+	percentageInBounds := float64(pointsInBounds) / float64(len(points))
+	log.Printf("Percentage of points in bounds: %f%%", percentageInBounds*100)
+
+	// Return true if at least 50% of the points are within the padded bounding box
+	return percentageInBounds >= 0.5
 }
 
 // extendRoute makes a route longer by adding zigzags

@@ -9,6 +9,31 @@ document.addEventListener('DOMContentLoaded', function() {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
 
+    // Add a legend to the map
+    const legend = L.control({position: 'bottomright'});
+
+    legend.onAdd = function(map) {
+        const div = L.DomUtil.create('div', 'map-legend');
+        div.innerHTML = `
+            <h4>Legend</h4>
+            <div class="legend-item">
+                <div class="legend-color blue"></div>
+                <span>Existing Routes</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color green"></div>
+                <span>Suggested Routes (Streets)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color orange"></div>
+                <span>Suggested Routes (Direct)</span>
+            </div>
+        `;
+        return div;
+    };
+
+    legend.addTo(map);
+
     // Layer groups for different route types
     const existingRoutesLayer = L.layerGroup().addTo(map);
     const suggestedRoutesLayer = L.layerGroup().addTo(map);
@@ -75,7 +100,11 @@ document.addEventListener('DOMContentLoaded', function() {
             routes.forEach(route => {
                 if (route.trackPoints && route.trackPoints.length > 0) {
                     const points = route.trackPoints.map(point => [point.lat, point.lng]);
-                    const polyline = L.polyline(points, { color: 'blue', weight: 3 });
+                    const polyline = L.polyline(points, {
+                        color: 'blue',
+                        weight: 3,
+                        className: 'existing-route'
+                    });
 
                     polyline.bindPopup(`
                         <strong>${route.filename}</strong><br>
@@ -109,9 +138,23 @@ document.addEventListener('DOMContentLoaded', function() {
     suggestButton.addEventListener('click', function() {
         suggestedRoutesLayer.clearLayers();
 
-        const minDistance = minDistanceInput.value ? parseFloat(minDistanceInput.value) : 0;
-        const maxDistance = maxDistanceInput.value ? parseFloat(maxDistanceInput.value) : 0;
+        let minDistance = minDistanceInput.value ? parseFloat(minDistanceInput.value) : 0;
+        let maxDistance = maxDistanceInput.value ? parseFloat(maxDistanceInput.value) : 0;
         const followStreets = followStreetsCheckbox.checked;
+
+        // Validate min/max distance values
+        if (minDistance < 0) minDistance = 0;
+        if (maxDistance < 0) maxDistance = 0;
+        if (maxDistance > 0 && minDistance > maxDistance) {
+            // Swap values if min > max
+            const temp = minDistance;
+            minDistance = maxDistance;
+            maxDistance = temp;
+
+            // Update the input fields
+            minDistanceInput.value = minDistance;
+            maxDistanceInput.value = maxDistance;
+        }
 
         let url = '/suggest';
         const params = [];
@@ -147,9 +190,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (route.points && route.points.length > 0) {
                     const points = route.points.map(point => [point.lat, point.lng]);
 
-                    // Set color based on whether the route follows streets
+                    // Set color and class based on whether the route follows streets
                     const routeColor = route.followsStreets ? 'green' : 'orange';
-                    const polyline = L.polyline(points, { color: routeColor, weight: 4 });
+                    const routeClass = route.followsStreets ? 'suggested-route-streets' : 'suggested-route-direct';
+                    const polyline = L.polyline(points, {
+                        color: routeColor,
+                        weight: 4,
+                        className: routeClass
+                    });
 
                     polyline.bindPopup(`
                         <strong>Suggested Route ${index + 1}</strong><br>
