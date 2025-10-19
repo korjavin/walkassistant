@@ -154,6 +154,11 @@ document.addEventListener("DOMContentLoaded", function () {
           <label for="route-${route.id}" style="cursor: pointer; flex: 1;">
             <strong>${route.filename}</strong> - ${distance} km
           </label>
+          <button onclick="window.deleteRoute('${route.id}', '${route.filename}')"
+                  style="padding: 0.2rem 0.5rem; background: #ff4444; color: white; border: none; border-radius: 3px; cursor: pointer;"
+                  title="Delete route">
+            🗑️
+          </button>
         </div>
       `;
       })
@@ -233,6 +238,35 @@ document.addEventListener("DOMContentLoaded", function () {
       state.visibleRouteIds.add(routeId);
     }
     displayRoutes();
+  };
+
+  // Delete route
+  window.deleteRoute = async function (routeId, filename) {
+    if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/routes/delete?id=${routeId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete route");
+      }
+
+      // Remove from state
+      state.allRoutes = state.allRoutes.filter((route) => route.id !== routeId);
+      state.visibleRouteIds.delete(routeId);
+
+      // Update UI
+      updateRouteList();
+      displayRoutes();
+
+      showStatus(`Deleted "${filename}" successfully`, "success");
+    } catch (error) {
+      showStatus(`Error deleting route: ${error.message}`, "error");
+    }
   };
 
   // Show existing routes button

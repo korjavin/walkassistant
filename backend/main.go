@@ -9,10 +9,8 @@ import (
 	"io"
 	"log"
 	"math"
-	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -77,10 +75,7 @@ func main() {
 	initOAuth()
 	initSecureCookie()
 
-	// Load existing GPX files
-	loadExistingGPXFiles()
-
-	// Auth endpoints
+	// Set up HTTP handlers
 	http.HandleFunc("/auth/google/login", handleGoogleLogin)
 	http.HandleFunc("/auth/google/callback", handleGoogleCallback)
 	http.HandleFunc("/api/auth/status", handleAuthStatus)
@@ -89,6 +84,7 @@ func main() {
 	// Protected endpoints
 	http.HandleFunc("/upload", withAuth(uploadHandler))
 	http.HandleFunc("/routes", withAuth(routesHandler))
+	http.HandleFunc("/routes/delete", withAuth(deleteRouteHandler))
 	http.HandleFunc("/suggest", withAuth(suggestHandler))
 
 	// Serve static files
@@ -306,20 +302,37 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save to user-specific directory
-	userDataDir := fmt.Sprintf("data/users/%s", userID)
-	os.MkdirAll(userDataDir, os.ModePerm)
-
-	// Save the file
-	err = saveFile(file, handler.Filename, userDataDir)
+	// Create temporary file for parsing (will be deleted after)
+	tempFile, err := os.CreateTemp("", "gpx-*.gpx")
 	if err != nil {
-		http.Error(w, "Unable to save file", http.StatusInternalServerError)
+		log.Printf("Error creating temp file: %v", err)
+		http.Error(w, "Unable to process file", http.StatusInternalServerError)
+		return
+	}
+	tempFilePath := tempFile.Name()
+	defer os.Remove(tempFilePath) // Delete temp file when done
+
+	// Copy uploaded file to temp file
+	_, err = io.Copy(tempFile, file)
+	tempFile.Close()
+	if err != nil {
+		log.Printf("Error writing temp file: %v", err)
+		http.Error(w, "Unable to process file", http.StatusInternalServerError)
 		return
 	}
 
-	// Parse the GPX file
-	gpxData, err := parseGPX(handler.Filename, userDataDir)
+	// Parse the GPX file from temp location
+	gpxFile, err := os.Open(tempFilePath)
 	if err != nil {
+		log.Printf("Error opening temp file: %v", err)
+		http.Error(w, "Unable to process file", http.StatusInternalServerError)
+		return
+	}
+	defer gpxFile.Close()
+
+	gpxData, err := gpx.Parse(gpxFile)
+	if err != nil {
+		log.Printf("Error parsing GPX file: %v", err)
 		http.Error(w, "Unable to parse GPX file", http.StatusInternalServerError)
 		return
 	}
@@ -344,39 +357,6 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("File uploaded and processed successfully: %s", handler.Filename),
 	})
-}
-
-func saveFile(file multipart.File, filename string, dataDir string) error {
-	// Create the file in the data directory
-	dst, err := os.Create(fmt.Sprintf("%s/%s", dataDir, filename))
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-
-	// Copy the uploaded file to the destination file
-	_, err = io.Copy(dst, file)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func parseGPX(filename string, dataDir string) (*gpx.GPX, error) {
-	filePath := fmt.Sprintf("%s/%s", dataDir, filename)
-	gpxFile, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer gpxFile.Close()
-
-	gpxData, err := gpx.Parse(gpxFile)
-	if err != nil {
-		return nil, err
-	}
-
-	return gpxData, nil
 }
 
 func processGPXData(filename string, gpxData *gpx.GPX) (storage.RouteData, error) {
@@ -426,66 +406,8 @@ func processGPXData(filename string, gpxData *gpx.GPX) (storage.RouteData, error
 	return route, nil
 }
 
-func loadExistingGPXFiles() {
-	// Get all user directories
-	userDirs, err := filepath.Glob("data/users/*")
-	if err != nil {
-		log.Printf("Error loading user directories: %v", err)
-		return
-	}
-
-	for _, userDir := range userDirs {
-		userID := filepath.Base(userDir)
-		files, err := filepath.Glob(filepath.Join(userDir, "*.gpx"))
-		if err != nil {
-			log.Printf("Error loading GPX files for user %s: %v", userID, err)
-			continue
-		}
-
-		for _, file := range files {
-			filename := filepath.Base(file)
-
-			// Check if already in DB
-			routes, err := db.GetRoutesByUserID(userID)
-			if err != nil {
-				log.Printf("Error checking existing routes for user %s: %v", userID, err)
-				continue
-			}
-
-			exists := false
-			for _, r := range routes {
-				if r.Filename == filename {
-					exists = true
-					break
-				}
-			}
-			if exists {
-				continue
-			}
-
-			// Parse and save to DB
-			gpxData, err := parseGPX(filename, userDir)
-			if err != nil {
-				log.Printf("Error parsing GPX file %s: %v", filename, err)
-				continue
-			}
-
-			route, err := processGPXData(filename, gpxData)
-			if err != nil {
-				log.Printf("Error processing GPX file %s: %v", filename, err)
-				continue
-			}
-
-			route.UserID = userID
-			if err := db.CreateRoute(&route); err != nil {
-				log.Printf("Error saving route to database: %v", err)
-				continue
-			}
-		}
-	}
-
-	log.Printf("Loaded existing GPX files from user directories")
-}
+// loadExistingGPXFiles - removed as we no longer store files
+// All route data is stored in the database only
 
 func routesHandler(w http.ResponseWriter, r *http.Request) {
 	userID := getUserIDFromRequest(r)
@@ -597,6 +519,51 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(suggested)
+}
+
+func deleteRouteHandler(w http.ResponseWriter, r *http.Request) {
+	userID := getUserIDFromRequest(r)
+
+	if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get route ID from query parameter
+	routeID := r.URL.Query().Get("id")
+	if routeID == "" {
+		http.Error(w, "Route ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the route belongs to this user
+	route, err := db.GetRouteByID(routeID)
+	if err != nil {
+		log.Printf("Error getting route %s: %v", routeID, err)
+		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
+
+	if route.UserID != userID {
+		log.Printf("User %s attempted to delete route %s owned by %s", userID, routeID, route.UserID)
+		http.Error(w, "Unauthorized", http.StatusForbidden)
+		return
+	}
+
+	// Delete from database
+	if err := db.DeleteRoute(routeID); err != nil {
+		log.Printf("Error deleting route %s: %v", routeID, err)
+		http.Error(w, "Unable to delete route", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("User %s deleted route %s (%s)", userID, routeID, route.Filename)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Route deleted successfully",
+		"id":      routeID,
+	})
 }
 
 // filterOutlierRoutes removes routes that are geographically distant from the majority
