@@ -7,9 +7,6 @@ const state = {
 };
 
 document.addEventListener("DOMContentLoaded", function () {
-  // Check authentication status first
-  checkAuthStatus();
-
   // Initialize map
   const map = L.map("map-container").setView([0, 0], 13);
 
@@ -503,4 +500,7 @@ document.addEventListener("DOMContentLoaded", function () {
       window.location.href = "/auth/logout";
     });
   }
+
+  // Check authentication status after all functions are defined
+  checkAuthStatus();
 });
