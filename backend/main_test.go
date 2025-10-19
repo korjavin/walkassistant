@@ -4,6 +4,8 @@ import (
 	"math"
 	"os"
 	"testing"
+
+	"github.com/korjavin/walkassistant/backend/pkg/storage"
 )
 
 func TestHaversineDistance(t *testing.T) {
@@ -43,19 +45,19 @@ func TestHaversineDistance(t *testing.T) {
 
 func TestCalculateRouteDistance(t *testing.T) {
 	// Test with empty slice
-	emptyRoute := []TrackPoint{}
+	emptyRoute := []storage.TrackPoint{}
 	if distance := calculateRouteDistance(emptyRoute); distance != 0 {
 		t.Errorf("Expected 0 distance for empty route, got %f", distance)
 	}
 
 	// Test with single point
-	singlePoint := []TrackPoint{{Latitude: 52.5200, Longitude: 13.4050}}
+	singlePoint := []storage.TrackPoint{{Latitude: 52.5200, Longitude: 13.4050}}
 	if distance := calculateRouteDistance(singlePoint); distance != 0 {
 		t.Errorf("Expected 0 distance for single point route, got %f", distance)
 	}
 
 	// Test with multiple points forming a square in Berlin (approximately 4 km perimeter)
-	squareRoute := []TrackPoint{
+	squareRoute := []storage.TrackPoint{
 		{Latitude: 52.52, Longitude: 13.40}, // Alexanderplatz area
 		{Latitude: 52.52, Longitude: 13.45}, // 3.5 km east
 		{Latitude: 52.56, Longitude: 13.45}, // 4.4 km north
@@ -75,7 +77,7 @@ func TestCalculateRouteDistance(t *testing.T) {
 
 func TestAdjustRouteDistance(t *testing.T) {
 	// Test scaling a square route
-	originalRoute := []TrackPoint{
+	originalRoute := []storage.TrackPoint{
 		{Latitude: 52.52, Longitude: 13.40},
 		{Latitude: 52.52, Longitude: 13.45},
 		{Latitude: 52.56, Longitude: 13.45},
@@ -157,9 +159,9 @@ func TestDecodePolyline(t *testing.T) {
 func TestGenerateSuggestedRoutes(t *testing.T) {
 	// We need to set up some test data first
 	// Create a test route to populate the routes slice
-	testRoute := RouteData{
+	testRoute := storage.RouteData{
 		Filename: "test.gpx",
-		TrackPoints: []TrackPoint{
+		TrackPoints: []storage.TrackPoint{
 			{Latitude: 52.52, Longitude: 13.40},
 			{Latitude: 52.53, Longitude: 13.41},
 			{Latitude: 52.54, Longitude: 13.42},
@@ -169,20 +171,10 @@ func TestGenerateSuggestedRoutes(t *testing.T) {
 		Distance: 5.0,
 	}
 
-	// Add the test route to the routes slice
-	routesMutex.Lock()
-	// Save the original routes and restore them after the test
-	originalRoutes := routes
-	routes = []RouteData{testRoute}
-	defer func() {
-		routesMutex.Lock()
-		routes = originalRoutes
-		routesMutex.Unlock()
-	}()
-	routesMutex.Unlock()
+	userRoutes := []*storage.RouteData{&testRoute}
 
 	// Test case 1: Generate a route with reasonable constraints
-	generatedRoutes, err := generateSuggestedRoutes(1.0, 10.0, false)
+	generatedRoutes, err := generateSuggestedRoutes(userRoutes, 1.0, 10.0, false)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	} else if len(generatedRoutes) == 0 {
@@ -197,7 +189,7 @@ func TestGenerateSuggestedRoutes(t *testing.T) {
 	}
 
 	// Test case 2: Generate a route with very large constraints
-	generatedRoutes, err = generateSuggestedRoutes(1.0, 1000.0, false)
+	generatedRoutes, err = generateSuggestedRoutes(userRoutes, 1.0, 1000.0, false)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	} else if len(generatedRoutes) == 0 {
@@ -205,7 +197,7 @@ func TestGenerateSuggestedRoutes(t *testing.T) {
 	}
 
 	// Test case 3: Generate a route with impossible constraints
-	generatedRoutes, err = generateSuggestedRoutes(1000.0, 2000.0, false)
+	generatedRoutes, err = generateSuggestedRoutes(userRoutes, 1000.0, 2000.0, false)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	} else if len(generatedRoutes) > 0 {
@@ -216,7 +208,7 @@ func TestGenerateSuggestedRoutes(t *testing.T) {
 
 func TestExtendRoute(t *testing.T) {
 	// Create a simple route
-	originalRoute := []TrackPoint{
+	originalRoute := []storage.TrackPoint{
 		{Latitude: 52.52, Longitude: 13.40},
 		{Latitude: 52.53, Longitude: 13.41},
 		{Latitude: 52.54, Longitude: 13.42},
@@ -272,7 +264,7 @@ func TestGetRouteFollowingStreets(t *testing.T) {
 	}
 
 	// Create a simple route with a few points
-	testRoute := []TrackPoint{
+	testRoute := []storage.TrackPoint{
 		{Latitude: 52.52, Longitude: 13.40}, // Berlin Alexanderplatz
 		{Latitude: 52.51, Longitude: 13.38}, // Berlin Potsdamer Platz
 	}
@@ -320,30 +312,30 @@ func TestIsRouteNearExistingRoutes(t *testing.T) {
 
 	// Test cases with routes inside and outside the bounding box
 	testCases := []struct {
-		route    []TrackPoint
+		route    []storage.TrackPoint
 		expected bool
 	}{
 		// Route completely inside the bounding box
-		{[]TrackPoint{
+		{[]storage.TrackPoint{
 			{Latitude: 52.52, Longitude: 13.40},
 			{Latitude: 52.53, Longitude: 13.42},
 		}, true},
 
 		// Route completely outside the bounding box
-		{[]TrackPoint{
+		{[]storage.TrackPoint{
 			{Latitude: 53.52, Longitude: 14.40}, // Far away
 			{Latitude: 53.53, Longitude: 14.42},
 		}, false},
 
 		// Route partially inside the bounding box (>50% inside)
-		{[]TrackPoint{
+		{[]storage.TrackPoint{
 			{Latitude: 52.52, Longitude: 13.40}, // Inside
 			{Latitude: 52.53, Longitude: 13.42}, // Inside
 			{Latitude: 53.00, Longitude: 14.00}, // Outside
 		}, true},
 
 		// Route partially inside the bounding box (<50% inside)
-		{[]TrackPoint{
+		{[]storage.TrackPoint{
 			{Latitude: 52.52, Longitude: 13.40}, // Inside
 			{Latitude: 53.00, Longitude: 14.00}, // Outside
 			{Latitude: 53.10, Longitude: 14.10}, // Outside
