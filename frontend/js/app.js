@@ -56,6 +56,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const minDistanceInput = document.getElementById("min-distance");
   const maxDistanceInput = document.getElementById("max-distance");
   const followStreetsCheckbox = document.getElementById("follow-streets");
+  const usePOIsCheckbox = document.getElementById("use-pois");
 
   // Handle file upload
   uploadForm.addEventListener("submit", function (e) {
@@ -259,6 +260,7 @@ document.addEventListener("DOMContentLoaded", function () {
       ? parseFloat(maxDistanceInput.value)
       : 0;
     const followStreets = followStreetsCheckbox.checked;
+    const usePOIs = usePOIsCheckbox.checked;
 
     // Validate min/max distance values
     if (minDistance < 0) minDistance = 0;
@@ -288,6 +290,11 @@ document.addEventListener("DOMContentLoaded", function () {
     // Only add followStreets parameter if it's false (since true is the default)
     if (!followStreets) {
       params.push(`followStreets=false`);
+    }
+
+    // Add usePOIs parameter if checked
+    if (usePOIs) {
+      params.push(`usePOIs=true`);
     }
 
     // Send the list of visible route IDs

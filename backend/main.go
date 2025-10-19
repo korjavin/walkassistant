@@ -518,6 +518,7 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	minDistance := 0.0
 	maxDistance := 0.0
 	followStreets := true // Default to following streets
+	usePOIs := false      // New parameter for POI-based suggestions
 	var selectedRouteIDs []string
 
 	if r.URL.Query().Get("minDistance") != "" {
@@ -529,13 +530,16 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("followStreets") == "false" {
 		followStreets = false
 	}
+	if r.URL.Query().Get("usePOIs") == "true" {
+		usePOIs = true
+	}
 	if r.URL.Query().Get("routeIds") != "" {
 		selectedRouteIDs = strings.Split(r.URL.Query().Get("routeIds"), ",")
 	}
 
 	// Log the parameters for debugging
-	log.Printf("Suggesting routes with parameters: minDistance=%f, maxDistance=%f, followStreets=%t, routeIds=%v",
-		minDistance, maxDistance, followStreets, selectedRouteIDs)
+	log.Printf("Suggesting routes with parameters: minDistance=%f, maxDistance=%f, followStreets=%t, usePOIs=%t, routeIds=%v",
+		minDistance, maxDistance, followStreets, usePOIs, selectedRouteIDs)
 
 	// Get user's routes
 	userRoutes, err := db.GetRoutesByUserID(userID)
@@ -565,8 +569,21 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	// Generate suggested routes
 	var suggested []SuggestedRoute
 
-	// If we need a route with a minimum distance and following streets, use a specialized function
-	if minDistance > 0 && followStreets {
+	// Use POI-based suggestions if requested
+	if usePOIs {
+		log.Printf("Using POI-based route generation")
+		suggested, err = generatePOIAnchoredRoute(userRoutes, minDistance, maxDistance)
+		if err != nil {
+			log.Printf("POI-based generation failed: %v, falling back to standard generation", err)
+			// Fall back to standard generation if POI-based fails
+			if minDistance > 0 && followStreets {
+				suggested, err = generateRouteWithMinDistance(userRoutes, minDistance)
+			} else {
+				suggested, err = generateSuggestedRoutes(userRoutes, minDistance, maxDistance, followStreets)
+			}
+		}
+	} else if minDistance > 0 && followStreets {
+		// If we need a route with a minimum distance and following streets, use a specialized function
 		log.Printf("Using specialized function to generate a route with minimum distance %f km that follows streets", minDistance)
 		suggested, err = generateRouteWithMinDistance(userRoutes, minDistance)
 	} else {
@@ -1316,4 +1333,300 @@ func extendRoute(points []storage.TrackPoint, extensionFactor float64) []storage
 	newPoints = append(newPoints, points[len(points)-1])
 
 	return newPoints
+}
+
+// POI represents a Point of Interest from OpenStreetMap
+type POI struct {
+	ID       int64              `json:"id"`
+	Type     string             `json:"type"`
+	Name     string             `json:"name"`
+	Location storage.TrackPoint `json:"location"`
+	Tags     map[string]string  `json:"tags"`
+}
+
+// OverpassResponse represents the response from Overpass API
+type OverpassResponse struct {
+	Elements []struct {
+		ID   int64             `json:"id"`
+		Type string            `json:"type"`
+		Lat  float64           `json:"lat"`
+		Lon  float64           `json:"lon"`
+		Tags map[string]string `json:"tags"`
+	} `json:"elements"`
+}
+
+// queryNearbyPOIs queries OpenStreetMap for interesting POIs within radius (in km)
+func queryNearbyPOIs(lat, lng, radiusKm float64) ([]POI, error) {
+	// Overpass API query for interesting POIs
+	// We look for: parks, viewpoints, monuments, water features, gardens
+	overpassQuery := fmt.Sprintf(`[out:json][timeout:25];
+(
+  node["leisure"="park"](around:%d,%f,%f);
+  node["tourism"="viewpoint"](around:%d,%f,%f);
+  node["tourism"="attraction"](around:%d,%f,%f);
+  node["historic"="monument"](around:%d,%f,%f);
+  node["natural"="water"](around:%d,%f,%f);
+  node["leisure"="garden"](around:%d,%f,%f);
+  node["amenity"="fountain"](around:%d,%f,%f);
+  way["leisure"="park"](around:%d,%f,%f);
+  way["leisure"="garden"](around:%d,%f,%f);
+);
+out center;`,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+		int(radiusKm*1000), lat, lng,
+	)
+
+	overpassURL := "https://overpass-api.de/api/interpreter"
+
+	resp, err := http.Post(overpassURL, "application/x-www-form-urlencoded", strings.NewReader("data="+overpassQuery))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query Overpass API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Overpass API returned status %d", resp.StatusCode)
+	}
+
+	var overpassResp OverpassResponse
+	if err := json.NewDecoder(resp.Body).Decode(&overpassResp); err != nil {
+		return nil, fmt.Errorf("failed to decode Overpass response: %w", err)
+	}
+
+	// Convert to POI list
+	pois := make([]POI, 0, len(overpassResp.Elements))
+	for _, elem := range overpassResp.Elements {
+		name := elem.Tags["name"]
+		if name == "" {
+			// Skip POIs without names
+			continue
+		}
+
+		poiType := "unknown"
+		if leisure, ok := elem.Tags["leisure"]; ok {
+			poiType = leisure
+		} else if tourism, ok := elem.Tags["tourism"]; ok {
+			poiType = tourism
+		} else if historic, ok := elem.Tags["historic"]; ok {
+			poiType = historic
+		} else if natural, ok := elem.Tags["natural"]; ok {
+			poiType = natural
+		}
+
+		pois = append(pois, POI{
+			ID:   elem.ID,
+			Type: poiType,
+			Name: name,
+			Location: storage.TrackPoint{
+				Latitude:  elem.Lat,
+				Longitude: elem.Lon,
+			},
+			Tags: elem.Tags,
+		})
+	}
+
+	log.Printf("Found %d POIs near [%f, %f] within %.1f km", len(pois), lat, lng, radiusKm)
+	return pois, nil
+}
+
+// filterUnvisitedPOIs removes POIs that are close to existing route points
+func filterUnvisitedPOIs(pois []POI, userRoutes []*storage.RouteData) []POI {
+	const visitedThresholdKm = 0.1 // Consider POI visited if within 100m of any route point
+
+	unvisited := make([]POI, 0)
+	for _, poi := range pois {
+		isVisited := false
+
+		for _, route := range userRoutes {
+			for _, point := range route.TrackPoints {
+				dist := haversineDistance(poi.Location.Latitude, poi.Location.Longitude,
+					point.Latitude, point.Longitude)
+				if dist <= visitedThresholdKm {
+					isVisited = true
+					break
+				}
+			}
+			if isVisited {
+				break
+			}
+		}
+
+		if !isVisited {
+			unvisited = append(unvisited, poi)
+		}
+	}
+
+	log.Printf("Filtered to %d unvisited POIs (out of %d total)", len(unvisited), len(pois))
+	return unvisited
+}
+
+// findBestPOICombination finds combinations of POIs that would create a good route
+func findBestPOICombination(pois []POI, startLat, startLng, targetDistance float64) [][]POI {
+	if len(pois) == 0 {
+		return nil
+	}
+
+	// Score each POI by distance from start
+	type scoredPOI struct {
+		poi  POI
+		dist float64
+	}
+
+	scored := make([]scoredPOI, 0, len(pois))
+	for _, poi := range pois {
+		dist := haversineDistance(startLat, startLng, poi.Location.Latitude, poi.Location.Longitude)
+		scored = append(scored, scoredPOI{poi: poi, dist: dist})
+	}
+
+	// Sort by distance
+	for i := 0; i < len(scored); i++ {
+		for j := i + 1; j < len(scored); j++ {
+			if scored[i].dist > scored[j].dist {
+				scored[i], scored[j] = scored[j], scored[i]
+			}
+		}
+	}
+
+	// Create combinations of 2-3 POIs
+	combinations := make([][]POI, 0)
+
+	// Single POI routes (out and back)
+	for i := 0; i < len(scored) && i < 5; i++ {
+		combinations = append(combinations, []POI{scored[i].poi})
+	}
+
+	// Two POI routes
+	for i := 0; i < len(scored) && i < 4; i++ {
+		for j := i + 1; j < len(scored) && j < 5; j++ {
+			combinations = append(combinations, []POI{scored[i].poi, scored[j].poi})
+		}
+	}
+
+	// Three POI routes
+	for i := 0; i < len(scored) && i < 3; i++ {
+		for j := i + 1; j < len(scored) && j < 4; j++ {
+			for k := j + 1; k < len(scored) && k < 5; k++ {
+				combinations = append(combinations, []POI{scored[i].poi, scored[j].poi, scored[k].poi})
+			}
+		}
+	}
+
+	log.Printf("Generated %d POI combinations from %d POIs", len(combinations), len(pois))
+	return combinations
+}
+
+// generatePOIAnchoredRoute generates routes that visit interesting POIs
+func generatePOIAnchoredRoute(userRoutes []*storage.RouteData, minDistance, maxDistance float64) ([]SuggestedRoute, error) {
+	if len(userRoutes) == 0 {
+		return []SuggestedRoute{}, nil
+	}
+
+	// Filter out geographic outliers
+	filteredRoutes := filterOutlierRoutes(userRoutes)
+	if len(filteredRoutes) == 0 {
+		filteredRoutes = userRoutes
+	}
+
+	// Calculate center of user's routes
+	var centerLat, centerLng float64
+	totalPoints := 0
+
+	for _, route := range filteredRoutes {
+		for _, point := range route.TrackPoints {
+			centerLat += point.Latitude
+			centerLng += point.Longitude
+			totalPoints++
+		}
+	}
+
+	if totalPoints > 0 {
+		centerLat /= float64(totalPoints)
+		centerLng /= float64(totalPoints)
+	} else {
+		return []SuggestedRoute{}, fmt.Errorf("no valid route points found")
+	}
+
+	log.Printf("Route center: [%f, %f]", centerLat, centerLng)
+
+	// Query nearby POIs within 5km
+	pois, err := queryNearbyPOIs(centerLat, centerLng, 5.0)
+	if err != nil {
+		log.Printf("Error querying POIs: %v", err)
+		return []SuggestedRoute{}, err
+	}
+
+	if len(pois) == 0 {
+		log.Printf("No POIs found nearby")
+		return []SuggestedRoute{}, fmt.Errorf("no POIs found nearby")
+	}
+
+	// Filter out already visited POIs
+	unvisitedPOIs := filterUnvisitedPOIs(pois, filteredRoutes)
+	if len(unvisitedPOIs) == 0 {
+		log.Printf("All nearby POIs have been visited")
+		unvisitedPOIs = pois // Fall back to all POIs if all have been visited
+	}
+
+	// Find best POI combinations
+	targetDistance := minDistance
+	if maxDistance > 0 {
+		targetDistance = (minDistance + maxDistance) / 2
+	}
+	if targetDistance == 0 {
+		targetDistance = 5.0 // Default 5km
+	}
+
+	combinations := findBestPOICombination(unvisitedPOIs, centerLat, centerLng, targetDistance)
+	if len(combinations) == 0 {
+		return []SuggestedRoute{}, fmt.Errorf("could not create POI combinations")
+	}
+
+	// Generate routes through POI combinations
+	suggestions := make([]SuggestedRoute, 0)
+
+	for _, combo := range combinations {
+		// Build waypoints: start -> POIs -> back to start (loop)
+		waypoints := []storage.TrackPoint{
+			{Latitude: centerLat, Longitude: centerLng},
+		}
+
+		for _, poi := range combo {
+			waypoints = append(waypoints, poi.Location)
+		}
+
+		// Close the loop
+		waypoints = append(waypoints, storage.TrackPoint{Latitude: centerLat, Longitude: centerLng})
+
+		// Get route following streets
+		route, err := getRouteFollowingStreets(waypoints)
+		if err != nil {
+			log.Printf("Error getting street route for POI combo: %v", err)
+			continue
+		}
+
+		// Check if route meets distance criteria
+		if minDistance > 0 && route.Distance < minDistance {
+			continue
+		}
+		if maxDistance > 0 && route.Distance > maxDistance {
+			continue
+		}
+
+		suggestions = append(suggestions, route)
+
+		// Limit to 5 suggestions
+		if len(suggestions) >= 5 {
+			break
+		}
+	}
+
+	log.Printf("Generated %d POI-anchored route suggestions", len(suggestions))
+	return suggestions, nil
 }
