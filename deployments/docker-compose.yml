@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 # This Docker Compose file defines the services, networks, and volumes
 # for the Walk Assistant application in a production-like environment.
@@ -38,8 +38,22 @@ services:
     # This is a best practice for separating configuration from the application image.
     # Values should be provided in a .env file or the environment where 'docker-compose up' is run.
     environment:
-      # Add environment variables as needed
+      # Timezone
       - TZ=UTC
+
+      # Google OAuth Configuration (required for authentication)
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL}
+
+      # Optional: Admin user Google ID
+      - GOOGLE_ADMIN_ID=${GOOGLE_ADMIN_ID:-}
+
+      # Cookie encryption keys (required for secure sessions)
+      # Generate with: openssl rand -hex 64 (for hash key)
+      #                openssl rand -hex 32 (for block key)
+      - COOKIE_HASH_KEY=${COOKIE_HASH_KEY}
+      - COOKIE_BLOCK_KEY=${COOKIE_BLOCK_KEY}
 
     # Traefik reverse proxy labels for automatic SSL and routing
     labels:
