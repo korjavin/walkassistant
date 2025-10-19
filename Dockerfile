@@ -1,5 +1,8 @@
 FROM golang:1.24-alpine AS builder
 
+# Add build argument for commit SHA
+ARG COMMIT_SHA=unknown
+
 WORKDIR /app
 
 # Copy go.mod and go.sum files

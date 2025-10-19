@@ -1,0 +1,64 @@
+version: '3.8'
+
+# This Docker Compose file defines the services, networks, and volumes
+# for the Walk Assistant application in a production-like environment.
+
+services:
+  # The main application service.
+  walkassistant:
+    # The image to use. It should be built and pushed to the specified registry,
+    # for example, GitHub Container Registry (ghcr.io).
+    # The ':latest' tag points to the most recent build from the main branch.
+    image: ghcr.io/korjavin/walkassistant:latest
+
+    # A friendly name for the container.
+    container_name: walkassistant
+
+    # The 'always' restart policy ensures the container restarts automatically
+    # if it stops unexpectedly or if the Docker daemon restarts.
+    restart: always
+
+    # Port 8080 is exposed internally for Traefik to route to.
+    # No need to publish to host since Traefik handles external access.
+    expose:
+      - "8080"
+
+    # Connect to Traefik network
+    networks:
+      - traefik
+
+    # This section defines how persistent data is handled.
+    volumes:
+      # Mounts the named volume 'walkassistant-data' to the '/app/data' directory
+      # inside the container. This is where the uploaded GPX files will be stored,
+      # ensuring data persistence across container restarts and updates.
+      - walkassistant-data:/app/data
+
+    # Passes configuration to the application via environment variables.
+    # This is a best practice for separating configuration from the application image.
+    # Values should be provided in a .env file or the environment where 'docker-compose up' is run.
+    environment:
+      # Add environment variables as needed
+      - TZ=UTC
+
+    # Traefik reverse proxy labels for automatic SSL and routing
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.walkassistant.rule=Host(`${DNS_NAME}`)"
+      - "traefik.http.routers.walkassistant.entrypoints=websecure"
+      - "traefik.http.routers.walkassistant.tls.certresolver=myresolver"
+      - "traefik.http.services.walkassistant.loadbalancer.server.port=8080"
+
+# Defines the named volumes used by the services.
+volumes:
+  # The 'walkassistant-data' volume is managed by Docker and provides a persistent
+  # storage location for the application's GPX files.
+  walkassistant-data:
+    # An empty driver configuration uses the default local driver.
+    driver: local
+
+# Network configuration - using external Traefik network
+networks:
+  traefik:
+    external: true
+    name: ${NETWORK_NAME}

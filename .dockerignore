@@ -1,0 +1,36 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Documentation
+README.md
+TODO.md
+plan.md
+*.md
+
+# Data files (should be mounted as volumes)
+data/
+*.gpx
+
+# Build artifacts
+main
+walkassistant
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Deployment files (not needed in image)
+deployments/
+docker-compose.yml
+
+# Images
+img/
