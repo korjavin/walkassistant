@@ -4,6 +4,8 @@
 const state = {
   isLoggedIn: false,
   userId: null,
+  allRoutes: [], // Store all routes
+  visibleRouteIds: new Set(), // Track which routes are visible
 };
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -92,69 +94,33 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Load existing routes
   function loadExistingRoutes() {
-    existingRoutesLayer.clearLayers();
-
     fetch("/routes")
       .then((response) => response.json())
       .then((routes) => {
-        if (routes.length === 0) {
-          showStatus("No existing routes found", "");
-          return;
-        }
+        // Store routes in state
+        state.allRoutes = routes;
 
-        let bounds = L.latLngBounds();
-
+        // Initialize all routes as visible by default
+        state.visibleRouteIds.clear();
         routes.forEach((route) => {
-          if (route.trackPoints && route.trackPoints.length > 0) {
-            const points = route.trackPoints.map((point) => [
-              point.lat,
-              point.lng,
-            ]);
-            // Generate a consistent color based on the route filename
-            const routeColor = getRouteColor(route.filename || "route");
-
-            const polyline = L.polyline(points, {
-              color: routeColor,
-              weight: 3,
-              className: "existing-route",
-            });
-
-            // Calculate route distance if not provided
-            let routeDistance = route.distance;
-            if (!routeDistance || routeDistance === 0) {
-              routeDistance = calculateRouteDistance(points);
-            }
-
-            polyline.bindPopup(`
-                        <strong>${route.filename}</strong><br>
-                        Distance: ${routeDistance.toFixed(2)} km<br>
-                        Duration: ${formatDuration(route.duration)}
-                    `);
-
-            // Show distance when hovering over the route
-            polyline.bindTooltip(`${routeDistance.toFixed(2)} km`, {
-              permanent: false,
-              direction: "center",
-              className: "route-tooltip",
-            });
-
-            existingRoutesLayer.addLayer(polyline);
-            bounds.extend(polyline.getBounds());
-          }
+          state.visibleRouteIds.add(route.id);
         });
 
-        if (!bounds.isValid()) {
+        if (routes.length === 0) {
+          showStatus("No existing routes found", "");
+          const routeListDiv = document.getElementById("route-list");
+          if (routeListDiv) {
+            routeListDiv.innerHTML =
+              '<p style="color: #888;">No routes loaded yet. Upload a GPX file to get started.</p>';
+          }
           return;
         }
 
-        // Fit map to bounds with some padding for better view
-        // Use a small delay to ensure map size is properly set
-        setTimeout(() => {
-          map.fitBounds(bounds, {
-            padding: [50, 50], // Add 50px padding on all sides
-            maxZoom: 15, // Don't zoom in too much
-          });
-        }, 150);
+        // Update the route list UI with checkboxes
+        updateRouteList();
+
+        // Display routes on the map
+        displayRoutes();
 
         showStatus(`Loaded ${routes.length} routes`, "success");
       })
@@ -162,6 +128,111 @@ document.addEventListener("DOMContentLoaded", function () {
         showStatus("Error loading routes: " + error.message, "error");
       });
   }
+
+  // Update the route list UI with checkboxes
+  function updateRouteList() {
+    const routeListDiv = document.getElementById("route-list");
+    if (!routeListDiv) return;
+
+    if (state.allRoutes.length === 0) {
+      routeListDiv.innerHTML =
+        '<p style="color: #888;">No routes loaded yet. Upload a GPX file to get started.</p>';
+      return;
+    }
+
+    routeListDiv.innerHTML = state.allRoutes
+      .map((route) => {
+        const isVisible = state.visibleRouteIds.has(route.id);
+        const routeColor = getRouteColor(route.filename || "route");
+        const distance = route.distance ? route.distance.toFixed(2) : "N/A";
+        return `
+        <div style="display: flex; align-items: center; margin: 0.5rem 0; gap: 0.5rem;">
+          <input type="checkbox" id="route-${route.id}" ${isVisible ? "checked" : ""}
+                 onchange="window.toggleRoute('${route.id}')" />
+          <div style="width: 20px; height: 20px; background-color: ${routeColor}; border-radius: 3px;"></div>
+          <label for="route-${route.id}" style="cursor: pointer; flex: 1;">
+            <strong>${route.filename}</strong> - ${distance} km
+          </label>
+        </div>
+      `;
+      })
+      .join("");
+  }
+
+  // Display only visible routes on the map
+  function displayRoutes() {
+    existingRoutesLayer.clearLayers();
+
+    if (state.allRoutes.length === 0) {
+      return;
+    }
+
+    let bounds = L.latLngBounds();
+    let visibleCount = 0;
+
+    state.allRoutes.forEach((route) => {
+      // Only show routes that are marked as visible
+      if (!state.visibleRouteIds.has(route.id)) {
+        return;
+      }
+
+      if (route.trackPoints && route.trackPoints.length > 0) {
+        const points = route.trackPoints.map((point) => [point.lat, point.lng]);
+        // Generate a consistent color based on the route filename
+        const routeColor = getRouteColor(route.filename || "route");
+
+        const polyline = L.polyline(points, {
+          color: routeColor,
+          weight: 3,
+          className: "existing-route",
+        });
+
+        // Calculate route distance if not provided
+        let routeDistance = route.distance;
+        if (!routeDistance || routeDistance === 0) {
+          routeDistance = calculateRouteDistance(points);
+        }
+
+        polyline.bindPopup(`
+                    <strong>${route.filename}</strong><br>
+                    Distance: ${routeDistance.toFixed(2)} km<br>
+                    Duration: ${formatDuration(route.duration)}
+                `);
+
+        // Show distance when hovering over the route
+        polyline.bindTooltip(`${routeDistance.toFixed(2)} km`, {
+          permanent: false,
+          direction: "center",
+          className: "route-tooltip",
+        });
+
+        existingRoutesLayer.addLayer(polyline);
+        bounds.extend(polyline.getBounds());
+        visibleCount++;
+      }
+    });
+
+    if (bounds.isValid() && visibleCount > 0) {
+      // Fit map to bounds with some padding for better view
+      // Use a small delay to ensure map size is properly set
+      setTimeout(() => {
+        map.fitBounds(bounds, {
+          padding: [50, 50], // Add 50px padding on all sides
+          maxZoom: 15, // Don't zoom in too much
+        });
+      }, 150);
+    }
+  }
+
+  // Toggle route visibility
+  window.toggleRoute = function (routeId) {
+    if (state.visibleRouteIds.has(routeId)) {
+      state.visibleRouteIds.delete(routeId);
+    } else {
+      state.visibleRouteIds.add(routeId);
+    }
+    displayRoutes();
+  };
 
   // Show existing routes button
   showExistingButton.addEventListener("click", function () {
@@ -171,6 +242,15 @@ document.addEventListener("DOMContentLoaded", function () {
   // Suggest new routes
   suggestButton.addEventListener("click", function () {
     suggestedRoutesLayer.clearLayers();
+
+    // Check if any routes are visible
+    if (state.visibleRouteIds.size === 0) {
+      showStatus(
+        "Please select at least one route to generate suggestions",
+        "error",
+      );
+      return;
+    }
 
     let minDistance = minDistanceInput.value
       ? parseFloat(minDistanceInput.value)
@@ -208,6 +288,13 @@ document.addEventListener("DOMContentLoaded", function () {
     // Only add followStreets parameter if it's false (since true is the default)
     if (!followStreets) {
       params.push(`followStreets=false`);
+    }
+
+    // Send the list of visible route IDs
+    const visibleIds = Array.from(state.visibleRouteIds);
+    if (visibleIds.length > 0 && visibleIds.length < state.allRoutes.length) {
+      // Only send if some (but not all) routes are selected
+      params.push(`routeIds=${visibleIds.join(",")}`);
     }
 
     if (params.length > 0) {

@@ -518,6 +518,7 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	minDistance := 0.0
 	maxDistance := 0.0
 	followStreets := true // Default to following streets
+	var selectedRouteIDs []string
 
 	if r.URL.Query().Get("minDistance") != "" {
 		fmt.Sscanf(r.URL.Query().Get("minDistance"), "%f", &minDistance)
@@ -528,10 +529,13 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("followStreets") == "false" {
 		followStreets = false
 	}
+	if r.URL.Query().Get("routeIds") != "" {
+		selectedRouteIDs = strings.Split(r.URL.Query().Get("routeIds"), ",")
+	}
 
 	// Log the parameters for debugging
-	log.Printf("Suggesting routes with parameters: minDistance=%f, maxDistance=%f, followStreets=%t",
-		minDistance, maxDistance, followStreets)
+	log.Printf("Suggesting routes with parameters: minDistance=%f, maxDistance=%f, followStreets=%t, routeIds=%v",
+		minDistance, maxDistance, followStreets, selectedRouteIDs)
 
 	// Get user's routes
 	userRoutes, err := db.GetRoutesByUserID(userID)
@@ -539,6 +543,23 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error getting routes for user %s: %v", userID, err)
 		http.Error(w, "Unable to get routes", http.StatusInternalServerError)
 		return
+	}
+
+	// Filter routes by selected IDs if provided
+	if len(selectedRouteIDs) > 0 {
+		selectedMap := make(map[string]bool)
+		for _, id := range selectedRouteIDs {
+			selectedMap[id] = true
+		}
+
+		filteredRoutes := make([]*storage.RouteData, 0, len(userRoutes))
+		for _, route := range userRoutes {
+			if selectedMap[route.ID] {
+				filteredRoutes = append(filteredRoutes, route)
+			}
+		}
+		userRoutes = filteredRoutes
+		log.Printf("Filtered to %d selected routes", len(userRoutes))
 	}
 
 	// Generate suggested routes
