@@ -147,7 +147,15 @@ document.addEventListener("DOMContentLoaded", function () {
           return;
         }
 
-        map.fitBounds(bounds);
+        // Fit map to bounds with some padding for better view
+        // Use a small delay to ensure map size is properly set
+        setTimeout(() => {
+          map.fitBounds(bounds, {
+            padding: [50, 50], // Add 50px padding on all sides
+            maxZoom: 15, // Don't zoom in too much
+          });
+        }, 150);
+
         showStatus(`Loaded ${routes.length} routes`, "success");
       })
       .catch((error) => {
@@ -267,7 +275,10 @@ document.addEventListener("DOMContentLoaded", function () {
           return;
         }
 
-        map.fitBounds(bounds);
+        map.fitBounds(bounds, {
+          padding: [50, 50],
+          maxZoom: 15,
+        });
 
         // Display route information in the status message
         const routeInfo = routes
