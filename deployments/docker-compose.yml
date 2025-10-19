@@ -9,7 +9,7 @@ services:
     # The image to use. It should be built and pushed to the specified registry,
     # for example, GitHub Container Registry (ghcr.io).
     # The ':latest' tag points to the most recent build from the main branch.
-    image: ghcr.io/korjavin/walkassistant:latest
+    image: ghcr.io/korjavin/walkassistant:60c4ec561dc0e87f9564851bec236a9affcc64d2
 
     # A friendly name for the container.
     container_name: walkassistant
