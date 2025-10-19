@@ -501,7 +501,11 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 			if minDistance > 0 && followStreets {
 				suggested, err = generateRouteWithMinDistance(userRoutes, minDistance)
 			} else {
-				suggested, err = generateSuggestedRoutes(userRoutes, minDistance, maxDistance, followStreets)
+				suggested, err = generateSuggestedRoutesV2(userRoutes, minDistance, maxDistance, followStreets)
+				if err != nil {
+					log.Printf("generateSuggestedRoutesV2 failed: %v, falling back to V1", err)
+					suggested, err = generateSuggestedRoutes(userRoutes, minDistance, maxDistance, followStreets)
+				}
 			}
 		}
 	} else if minDistance > 0 && followStreets {
@@ -509,7 +513,11 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Using specialized function to generate a route with minimum distance %f km that follows streets", minDistance)
 		suggested, err = generateRouteWithMinDistance(userRoutes, minDistance)
 	} else {
-		suggested, err = generateSuggestedRoutes(userRoutes, minDistance, maxDistance, followStreets)
+		suggested, err = generateSuggestedRoutesV2(userRoutes, minDistance, maxDistance, followStreets)
+		if err != nil {
+			log.Printf("generateSuggestedRoutesV2 failed: %v, falling back to V1", err)
+			suggested, err = generateSuggestedRoutes(userRoutes, minDistance, maxDistance, followStreets)
+		}
 	}
 
 	if err != nil {
@@ -862,6 +870,78 @@ func generateSuggestedRoutes(userRoutes []*storage.RouteData, minDistance, maxDi
 		suggestedRoute.Distance, suggestedRoute.FollowsStreets, maxDistance)
 
 	return []SuggestedRoute{suggestedRoute}, nil
+}
+
+func generateSuggestedRoutesV2(userRoutes []*storage.RouteData, minDistance, maxDistance float64, followStreets bool) ([]SuggestedRoute, error) {
+	// If no existing routes, return empty suggestions
+	if len(userRoutes) == 0 {
+		return []SuggestedRoute{}, nil
+	}
+
+	// Filter out geographic outliers (routes in different cities/countries)
+	filteredRoutes := filterOutlierRoutes(userRoutes)
+	if len(filteredRoutes) == 0 {
+		// If all routes were filtered as outliers, use all routes
+		filteredRoutes = userRoutes
+	}
+
+	// Calculate the average distance of the user's past routes
+	var totalDistance float64
+	for _, route := range filteredRoutes {
+		totalDistance += route.Distance
+	}
+	averageDistance := totalDistance / float64(len(filteredRoutes))
+
+	// Use the average distance as the target distance for the new route
+	targetDistance := averageDistance
+	if minDistance > 0 && targetDistance < minDistance {
+		targetDistance = minDistance
+	}
+	if maxDistance > 0 && targetDistance > maxDistance {
+		targetDistance = maxDistance
+	}
+
+	// Calculate the center of all routes
+	var centerLat, centerLng float64
+	var totalPoints int
+	for _, route := range filteredRoutes {
+		for _, point := range route.TrackPoints {
+			centerLat += point.Latitude
+			centerLng += point.Longitude
+			totalPoints++
+		}
+	}
+
+	if totalPoints == 0 {
+		return []SuggestedRoute{}, fmt.Errorf("no points found in user routes")
+	}
+
+	centerLat /= float64(totalPoints)
+	centerLng /= float64(totalPoints)
+
+	// Create a simple route with two points far enough apart
+	offset := math.Sqrt(targetDistance/2.0) / 111.0
+
+	simplePoints := []storage.TrackPoint{
+		{Latitude: centerLat - offset, Longitude: centerLng - offset},
+		{Latitude: centerLat + offset, Longitude: centerLng + offset},
+	}
+
+	if followStreets {
+		streetRoute, err := getRouteFollowingStreets(simplePoints)
+		if err == nil {
+			return []SuggestedRoute{streetRoute}, nil
+		}
+	}
+
+	// Fallback to a simple route
+	simpleRoute := SuggestedRoute{
+		Points:         simplePoints,
+		Distance:       calculateRouteDistance(simplePoints),
+		FollowsStreets: false,
+	}
+
+	return []SuggestedRoute{simpleRoute}, nil
 }
 
 func generateRouteWithMinDistance(userRoutes []*storage.RouteData, minDistance float64) ([]SuggestedRoute, error) {
