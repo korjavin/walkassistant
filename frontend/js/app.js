@@ -468,6 +468,12 @@ document.addEventListener("DOMContentLoaded", function () {
       userInfo.style.display = "inline-block";
       loginPrompt.style.display = "none";
       appContent.style.display = "block";
+
+      // Fix map size after making it visible
+      // Leaflet needs to recalculate dimensions when container becomes visible
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 100);
     } else {
       // User is not logged in - show login prompt
       loginBtn.style.display = "inline-block";
