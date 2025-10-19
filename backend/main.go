@@ -561,10 +561,79 @@ func suggestHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(suggested)
 }
 
+// filterOutlierRoutes removes routes that are geographically distant from the majority
+// This prevents issues when users have routes in different cities/countries
+func filterOutlierRoutes(routes []*storage.RouteData) []*storage.RouteData {
+	if len(routes) <= 1 {
+		return routes
+	}
+
+	// Calculate the center point of each route
+	type routeCenter struct {
+		route *storage.RouteData
+		lat   float64
+		lng   float64
+	}
+
+	centers := make([]routeCenter, 0, len(routes))
+	for _, route := range routes {
+		if len(route.TrackPoints) == 0 {
+			continue
+		}
+
+		// Calculate average position
+		var sumLat, sumLng float64
+		for _, point := range route.TrackPoints {
+			sumLat += point.Latitude
+			sumLng += point.Longitude
+		}
+		centers = append(centers, routeCenter{
+			route: route,
+			lat:   sumLat / float64(len(route.TrackPoints)),
+			lng:   sumLng / float64(len(route.TrackPoints)),
+		})
+	}
+
+	if len(centers) == 0 {
+		return routes
+	}
+
+	// Find the main cluster by calculating median center
+	// Then filter out routes that are more than 50km from the median
+	var medianLat, medianLng float64
+	for _, c := range centers {
+		medianLat += c.lat
+		medianLng += c.lng
+	}
+	medianLat /= float64(len(centers))
+	medianLng /= float64(len(centers))
+
+	// Filter routes within 50km of the median center
+	const maxDistanceKm = 50.0
+	filtered := make([]*storage.RouteData, 0, len(routes))
+	for _, c := range centers {
+		distance := haversineDistance(c.lat, c.lng, medianLat, medianLng)
+		if distance <= maxDistanceKm {
+			filtered = append(filtered, c.route)
+		} else {
+			log.Printf("Filtering out outlier route '%s': %.1f km from center", c.route.Filename, distance)
+		}
+	}
+
+	return filtered
+}
+
 func generateSuggestedRoutes(userRoutes []*storage.RouteData, minDistance, maxDistance float64, followStreets bool) ([]SuggestedRoute, error) {
 	// If no existing routes, return empty suggestions
 	if len(userRoutes) == 0 {
 		return []SuggestedRoute{}, nil
+	}
+
+	// Filter out geographic outliers (routes in different cities/countries)
+	filteredRoutes := filterOutlierRoutes(userRoutes)
+	if len(filteredRoutes) == 0 {
+		// If all routes were filtered as outliers, use all routes
+		filteredRoutes = userRoutes
 	}
 
 	// Create a grid of the area covered by existing routes
@@ -572,7 +641,7 @@ func generateSuggestedRoutes(userRoutes []*storage.RouteData, minDistance, maxDi
 	var allPoints []storage.TrackPoint
 
 	// Find the bounding box of all existing routes
-	for i, route := range userRoutes {
+	for i, route := range filteredRoutes {
 		for j, point := range route.TrackPoints {
 			allPoints = append(allPoints, point)
 
@@ -791,11 +860,17 @@ func generateSuggestedRoutes(userRoutes []*storage.RouteData, minDistance, maxDi
 }
 
 func generateRouteWithMinDistance(userRoutes []*storage.RouteData, minDistance float64) ([]SuggestedRoute, error) {
+	// Filter out geographic outliers
+	filteredRoutes := filterOutlierRoutes(userRoutes)
+	if len(filteredRoutes) == 0 {
+		filteredRoutes = userRoutes
+	}
+
 	// Find the bounding box of all existing routes
 	var minLat, maxLat, minLng, maxLng float64
 	hasPoints := false
 
-	for _, route := range userRoutes {
+	for _, route := range filteredRoutes {
 		for _, point := range route.TrackPoints {
 			if !hasPoints {
 				minLat, maxLat = point.Latitude, point.Latitude
